@@ -68,3 +68,10 @@ class Database:
                 "SELECT username, score FROM users ORDER BY score DESC LIMIT ?", 
                 (limit,)
             ).fetchall()
+    
+    # рахувати кількість користувачів 
+    def count_users(self):
+        """Рахує кількість користувачів"""
+        with self.connection:
+            result = self.cursor.execute("SELECT COUNT(*) FROM users").fetchone()
+            return result[0]

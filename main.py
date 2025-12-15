@@ -80,6 +80,15 @@ async def back_to_main_menu(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     await callback.answer() # Скидаємо статус "завантаження" з кнопки
+    
+# --- АДМІН-КОМАНДА ---
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    # Тут можна додати перевірку на твій ID, щоб цю команду міг викликати тільки ти
+    # Наприклад: if message.from_user.id != ТВІЙ_ID: return
+    
+    count = db.count_users()
+    await message.answer(f"📊 **Статистика бота:**\n\n👤 Користувачів: **{count}**", parse_mode="Markdown")
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
 
