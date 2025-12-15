@@ -13,6 +13,8 @@ from datetime import datetime
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
+from db import Database
+
 # Імпортуємо базу цитат з data.py
 from data import STOIC_DB, SCENARIOS
 
@@ -25,7 +27,8 @@ class MementoMori(StatesGroup):
     waiting_for_birthdate = State()
 
 # Тимчасова база даних користувачів в пам'яті
-user_db = {} 
+# user_db = {} 
+db = Database('stoic.db')
 
 # --- ІНІЦІАЛІЗАЦІЯ ---
 logging.basicConfig(level=logging.INFO)
@@ -55,8 +58,13 @@ def get_quote_keyboard():
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    # Додаємо юзера в базу (якщо його там немає)
+    db.add_user(message.from_user.id)
+    
     await message.answer(
-        "👋 **Вітаю, мандрівнику.**\n\nЯ допоможу тобі знайти спокій та мудрість.\nОбери свій шлях:",
+        "👋 **Вітаю в Stoic Trainer!**\n\n"
+        "Я допоможу тобі розвинути внутрішню стійкість.\n"
+        "Обери режим для тренування духу:",
         reply_markup=get_main_menu(),
         parse_mode="Markdown"
     )
@@ -163,19 +171,22 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "mode_gym")
 async def start_gym(callback: types.CallbackQuery):
-    # Ініціалізуємо гру
-    user_db[callback.from_user.id] = {"score": 0, "level": 1}
+    user_id = callback.from_user.id
+    
+    # Перевіряємо, чи є юзер (на всяк випадок)
+    db.add_user(user_id)
+    
+    # Отримуємо поточний прогрес
+    score, level = db.get_stats(user_id)
 
-    # Створюємо кнопки
     builder = InlineKeyboardBuilder()
-    builder.button(text="▶️ Почати тренування", callback_data="game_start")
-    builder.button(text="🔙 В меню", callback_data="back_home") # 👈 НОВА КНОПКА
+    builder.button(text="▶️ Продовжити тренування", callback_data="game_start")
+    builder.button(text="🔙 В меню", callback_data="back_home")
 
     await callback.message.edit_text(
-        "⚔️ **Stoic Gym | Гартування духу**\n\n"
-        "Тобі буде запропоновано 40 щоденних ситуацій.\n"
-        "Обери стоїчну реакцію, щоб набрати бали мудрості.\n"
-        "Наберіть 400 балів, щоб стати Майстром Стоїком!",
+        f"⚔️ **Stoic Gym | Рівень {level}**\n\n"
+        f"🏆 Твій рахунок: **{score}**\n"
+        "Продовжуй свій шлях до мудрості.",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
@@ -200,8 +211,8 @@ async def start_game_from_button(callback: types.CallbackQuery):
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
-    user_data = user_db[user_id]
-    current_level = user_data["level"]
+    # Отримуємо дані з БД
+    score, current_level = db.get_stats(user_id)
     max_level = len(SCENARIOS)
 
     # Перевірка на перемогу (якщо рівень став більшим за максимальний)
@@ -238,50 +249,42 @@ async def send_level(user_id, message_to_edit):
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
-    # 1. Перевірка: чи є юзер в базі 
-    if user_id not in user_db:
-        await callback.answer("Почни спочатку через /start")
-        return
-
-    user_data = user_db[user_id]
-    level_id = user_data["level"]
+    # Отримуємо дані з БД
+    current_score, current_level = db.get_stats(user_id)
     
-    # Якщо ми в процесі гри
-    if level_id in SCENARIOS:
-        scenario = SCENARIOS[level_id]
-        choice_id = callback.data.replace("game_", "") # Прибираємо можливий префікс 'game_'
+    # Якщо рівень існує в сценаріях
+    if current_level in SCENARIOS:
+        scenario = SCENARIOS[current_level]
+        choice_id = callback.data.replace("game_", "")
         
-        # Шукаємо, яку опцію обрав юзер
         selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
         
         if selected_option:
-            # 2. Оновлюємо статс
-            user_data["score"] += selected_option["score"]
-            user_data["level"] += 1
+            # Оновлюємо дані
+            new_score = current_score + selected_option["score"]
+            new_level = current_level + 1
             
-            # Видаляємо кнопки і пишемо результат
+            # ЗАПИСУЄМО В БАЗУ 💾
+            db.update_game_progress(user_id, new_score, new_level)
+            
             await callback.message.edit_text(
                 f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n💡 *{selected_option['msg']}*",
                 parse_mode="Markdown"
             )
             
-            # 3. Чекаємо трохи і даємо наступний рівень
             await asyncio.sleep(2)
             
             max_level = len(SCENARIOS)
-            
-            if user_data["level"] > max_level:
-                # ЛОГІКА ПЕРЕМОГИ
-                final_score = user_data["score"]
+            if new_level > max_level:
                 await callback.message.edit_text(
                     f"🏆 **ПЕРЕМОГА!** Ти завершив усі {max_level} рівнів!\n"
-                    f"Твій фінальний рахунок: **{final_score}**\n"
-                    f"«Бути стійким — означає керувати собою, а не світом.»",
+                    f"Твій фінальний рахунок: **{new_score}**",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
                 )
-                del user_db[user_id]
+                # Можна скинути гру, якщо хочеш:
+                # db.update_game_progress(user_id, 0, 1)
             else:
-                await send_level(user_id, callback.message) # Передаємо message_to_edit
+                await send_level(user_id, callback.message)
     
     await callback.answer()
     
