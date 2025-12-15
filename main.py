@@ -60,10 +60,11 @@ def get_quote_keyboard():
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     # Передаємо ID та Ім'я (first_name)
-    db.add_user(message.from_user.id, message.from_user.first_name)
+    user_name = message.from_user.first_name if message.from_user.first_name else "друже"
+    db.add_user(message.from_user.id, user_name)
     
     await message.answer(
-        "👋 **Вітаю в Stoic Trainer!**\n\n"
+        f"👋 **Вітаю, {user_name} в Stoic Trainer!**\n\n"
         "Я допоможу тобі розвинути внутрішню стійкість.\n"
         "Обери режим для тренування духу:",
         reply_markup=get_main_menu(),
@@ -224,8 +225,13 @@ async def start_gym(callback: types.CallbackQuery):
 
     builder = InlineKeyboardBuilder()
     builder.button(text="▶️ Продовжити тренування", callback_data="game_start")
+    
+    if level > 1 or score > 0: # Показуємо кнопку, тільки якщо є прогрес
+        builder.button(text="🔄 Почати заново", callback_data="reset_gym_confirm")
+        
     builder.button(text="🔙 В меню", callback_data="back_home")
 
+    builder.adjust(1)
     await callback.message.edit_text(
         f"⚔️ **Stoic Gym | Рівень {level}**\n\n"
         f"🏆 Твій рахунок: **{score}**\n"
@@ -307,6 +313,53 @@ async def send_level(user_id, message_to_edit):
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
+    
+# Додаємо команду /help
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    help_text = (
+        "📚 **Гід по Stoic Trainer**\n\n"
+        "Я створений, щоб допомогти тобі практикувати стоїцизм через інтерактивні вправи:\n\n"
+        "1. **⚔️ Stoic Gym (Гра):** 40 щоденних ситуацій, де ти обираєш стоїчну реакцію.\n"
+        "   👉 *Мета:* Набрати максимальну кількість балів мудрості.\n\n"
+        "2. **🧙‍♂️ Оракул:** Випадкові цитати від Сенеки та Марка Аврелія для роздумів.\n\n"
+        "3. **⏳ Memento Mori:** Нагадування про цінність часу (потрібна дата народження).\n\n"
+        "4. **🏆 Топ Стоїків:** Таблиця лідерів за балами мудрості.\n\n"
+        "Якщо загубився, завжди тисни /start, або кнопку '🔙 В меню'."
+    )
+    await message.answer(help_text, parse_mode="Markdown")
+    
+# додаємо функці. скинути прогрес
+@dp.callback_query(F.data == "reset_gym_confirm")
+async def confirm_reset(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Так, скинути все", callback_data="reset_gym_final")
+    builder.button(text="❌ Ні, повернутися", callback_data="mode_gym")
+    
+    await callback.message.edit_text(
+        "⚠️ **Увага!** Ти впевнений, що хочеш скинути свій прогрес?\n"
+        "Твій рахунок і рівень будуть обнулені.",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "reset_gym_final")
+async def reset_gym(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    # Скидаємо в базі: score=0, level=1
+    db.update_game_progress(user_id, 0, 1) 
+    
+    await callback.message.edit_text(
+        "✅ **Прогрес скинуто!**\n\n"
+        "Твій шлях стоїка починається знову. Натисни 'Почати тренування'.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Почати тренування", callback_data="game_start")],
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
+        ]),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 # Цей хендлер ловить вибір варіантів у грі (усі callback-и, які не є системними)
 # Переконайтеся, що back_to_main_menu() знаходиться ВИЩЕ у коді!
