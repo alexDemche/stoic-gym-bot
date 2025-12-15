@@ -102,37 +102,8 @@ async def send_random_quote(callback: types.CallbackQuery):
 
 # --- ЛОГІКА: MEMENTO MORI (ТАЙМЕР ЖИТТЯ) ---
 
-@dp.callback_query(F.data == "mode_memento")
-async def start_memento(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "⏳ **Memento Mori**\n\n"
-        "Щоб побачити свій таймер, введи дату народження.\n"
-        "Можна повну: `24.08.1995`\n"
-        "Або просто рік: `1995`", # 👈 Додали опцію
-        parse_mode="Markdown"
-    )
-    # Переводимо бота в режим очікування
-    await state.set_state(MementoMori.waiting_for_birthdate)
-
-@dp.message(MementoMori.waiting_for_birthdate)
-async def process_birthdate(message: types.Message, state: FSMContext):
-    date_text = message.text.strip()
-    birth_date = None
-    
-    # --- СПРОБА 1: Повна дата ---
-    try:
-        birth_date = datetime.strptime(date_text, "%d.%m.%Y")
-    except ValueError:
-        # --- СПРОБА 2: Тільки рік ---
-        try:
-            # Якщо ввели тільки рік, ставимо 1 січня цього року
-            birth_date = datetime.strptime(date_text, "%Y")
-        except ValueError:
-            # Якщо ні те, ні інше не підійшло
-            await message.answer("⚠️ Не розумію формат.\nНапиши просто рік (наприклад: `1998`) або дату (`24.08.1998`).")
-            return # Зупиняємо функцію, не виходимо зі стану, чекаємо нове повідомлення
-
-    # --- МАТЕМАТИКА ЖИТТЯ (Той самий код) ---
+def generate_memento_text(birth_date: datetime):
+    """Генерує текст таймера життя на основі дати."""
     AVG_LIFESPAN_YEARS = 80
     WEEKS_IN_YEAR = 52
     TOTAL_WEEKS = AVG_LIFESPAN_YEARS * WEEKS_IN_YEAR
@@ -141,18 +112,15 @@ async def process_birthdate(message: types.Message, state: FSMContext):
     weeks_lived = delta.days // 7
     
     percentage = (weeks_lived / TOTAL_WEEKS) * 100
-    
-    if percentage > 100:
-        percentage = 100
+    if percentage > 100: percentage = 100
         
     total_blocks = 20
     filled_blocks = int((percentage / 100) * total_blocks)
     empty_blocks = total_blocks - filled_blocks
-    
     progress_bar = "▓" * filled_blocks + "░" * empty_blocks
     
-    result_text = (
-        f"📅 **Точка відліку:** {birth_date.year} рік\n\n" # Показуємо тільки рік для краси
+    return (
+        f"📅 **Точка відліку:** {birth_date.year} рік\n\n"
         f"⏳ **Твій життєвий шлях (80 років):**\n"
         f"`{progress_bar}` {percentage:.1f}%\n\n"
         f"🔹 Прожито тижнів: **{weeks_lived}**\n"
@@ -160,11 +128,77 @@ async def process_birthdate(message: types.Message, state: FSMContext):
         f"💡 *«Життя довге, якщо знаєш, як його прожити.» — Сенека*"
     )
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
+@dp.callback_query(F.data == "reset_memento")
+async def reset_memento_date(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🔄 **Зміна дати**\n\n"
+        "Введи нову дату народження (або рік):",
+        parse_mode="Markdown"
+    )
+    await state.set_state(MementoMori.waiting_for_birthdate)
+    await callback.answer()
+
+@dp.callback_query(F.data == "mode_memento")
+async def start_memento(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    
+    # Перевіряємо, чи є збережена дата в базі
+    saved_date_str = db.get_birthdate(user_id)
+    
+    if saved_date_str:
+        # Якщо дата є, перетворюємо її назад у datetime і показуємо результат
+        birth_date = datetime.strptime(saved_date_str, "%Y-%m-%d")
+        text = generate_memento_text(birth_date)
+        
+        # Додаємо кнопку, щоб змінити дату, якщо треба
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Змінити дату", callback_data="reset_memento")],
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
+        ])
+        
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        # Якщо дати немає, просимо ввести
+        await callback.message.edit_text(
+            "⏳ **Memento Mori**\n\n"
+            "Щоб побачити свій таймер, введи дату народження.\n"
+            "Можна повну: `24.08.1995`\n"
+            "Або просто рік: `1995`",
+            parse_mode="Markdown"
+        )
+        await state.set_state(MementoMori.waiting_for_birthdate)
+    
+    await callback.answer()
+
+@dp.message(MementoMori.waiting_for_birthdate)
+async def process_birthdate(message: types.Message, state: FSMContext):
+    date_text = message.text.strip()
+    birth_date = None
+    
+    # Спроба 1: Повна дата
+    try:
+        birth_date = datetime.strptime(date_text, "%d.%m.%Y")
+    except ValueError:
+        # Спроба 2: Тільки рік
+        try:
+            birth_date = datetime.strptime(date_text, "%Y")
+        except ValueError:
+            await message.answer("⚠️ Не розумію формат.\nНапиши просто рік (наприклад: `1998`) або дату (`24.08.1998`).")
+            return 
+
+    # --- ЗБЕРЕЖЕННЯ В БАЗУ ---
+    # Зберігаємо у форматі РРРР-ММ-ДД (стандарт для баз даних)
+    db.set_birthdate(message.from_user.id, birth_date.strftime("%Y-%m-%d"))
+
+    # Генеруємо текст через нашу нову функцію
+    result_text = generate_memento_text(birth_date)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Змінити дату", callback_data="reset_memento")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
+    ])
     
     await message.answer(result_text, reply_markup=kb, parse_mode="Markdown")
-    
-    # Виходимо зі стану очікування
     await state.clear()
 
 # --- ЛОГІКА: STOIC GYM (ГРА) ---
