@@ -180,6 +180,23 @@ async def start_gym(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     await callback.answer()
+    
+# added handler Додаємо почати тренування 
+@dp.callback_query(F.data == "game_start")
+async def start_game_from_button(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # Редагуємо повідомлення, щоб прибрати кнопку "Почати тренування"
+    await callback.message.edit_text(
+        "⚔️ **Тренування розпочато!**\n\nГотуйся до першої ситуації...",
+        parse_mode="Markdown"
+    )
+    
+    # Викликаємо функцію, яка відправить перший рівень
+    await asyncio.sleep(1) 
+    await send_level(user_id, callback.message)
+    
+    await callback.answer()
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
