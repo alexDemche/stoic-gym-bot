@@ -42,7 +42,8 @@ def get_main_menu():
     builder = InlineKeyboardBuilder()
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
-    builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento") # 👈 НОВА КНОПКА
+    builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
+    builder.button(text="🏆 Топ Стоїків(юзерів)", callback_data="mode_top")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -58,8 +59,8 @@ def get_quote_keyboard():
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    # Додаємо юзера в базу (якщо його там немає)
-    db.add_user(message.from_user.id)
+    # Передаємо ID та Ім'я (first_name)
+    db.add_user(message.from_user.id, message.from_user.first_name)
     
     await message.answer(
         "👋 **Вітаю в Stoic Trainer!**\n\n"
@@ -206,9 +207,8 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "mode_gym")
 async def start_gym(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    
-    # Перевіряємо, чи є юзер (на всяк випадок)
-    db.add_user(user_id)
+    # Оновлюємо ім'я при вході в гру
+    db.add_user(user_id, callback.from_user.first_name)
     
     # Отримуємо поточний прогрес
     score, level = db.get_stats(user_id)
@@ -241,6 +241,28 @@ async def start_game_from_button(callback: types.CallbackQuery):
     await asyncio.sleep(1) 
     await send_level(user_id, callback.message)
     
+    await callback.answer()
+    
+# added leaderboard callback
+@dp.callback_query(F.data == "mode_top")
+async def show_leaderboard(callback: types.CallbackQuery):
+    top_users = db.get_top_users(10)
+
+    text = "🏆 **Алея Слави Стоїків**\n\n"
+
+    if not top_users:
+        text += "Поки що ніхто не набрав балів. Будь першим!"
+    else:
+        for i, (name, score) in enumerate(top_users, start=1):
+            # Медальки для перших трьох
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
+            # Якщо ім'я немає в базі (старі юзери), пишемо "Невідомий Стоїк"
+            safe_name = name if name else "Невідомий Стоїк"
+            text += f"{medal} {i}. **{safe_name}** — {score} балів\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
+
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     await callback.answer()
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
