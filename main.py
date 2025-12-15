@@ -62,12 +62,15 @@ async def cmd_start(message: types.Message):
     )
 
 @dp.callback_query(F.data == "back_home")
-async def back_home(callback: types.CallbackQuery):
+async def back_to_main_menu(callback: types.CallbackQuery):
+    """Обробник для кнопки "Назад в меню"."""
     await callback.message.edit_text(
-        "👋 **Головне меню.**\n\nОбери свій шлях:",
+        "👋 **Вітаю в Stoic Trainer!**\n\n"
+        "Обери режим для тренування духу:",
         reply_markup=get_main_menu(),
         parse_mode="Markdown"
     )
+    await callback.answer() # Скидаємо статус "завантаження" з кнопки
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
 
@@ -160,54 +163,65 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "mode_gym")
 async def start_gym(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    # Скидаємо прогрес
-    user_db[user_id] = {"score": 0, "level": 1}
-    
+    # Ініціалізуємо гру
+    user_db[callback.from_user.id] = {"score": 0, "level": 1}
+
+    # Створюємо кнопки
+    builder = InlineKeyboardBuilder()
+    builder.button(text="▶️ Почати тренування", callback_data="game_start")
+    builder.button(text="🔙 В меню", callback_data="back_home") # 👈 НОВА КНОПКА
+
     await callback.message.edit_text(
-        "🏛 **Stoic Gym**\n\nТут ми гартуємо характер.\nОбирай дії мудро.",
+        "⚔️ **Stoic Gym | Гартування духу**\n\n"
+        "Тобі буде запропоновано 40 щоденних ситуацій.\n"
+        "Обери стоїчну реакцію, щоб набрати бали мудрості.\n"
+        "Наберіть 400 балів, щоб стати Майстром Стоїком!",
+        reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
-    # Коротка пауза для ефекту
-    await asyncio.sleep(1)
-    await send_level(user_id)
+    await callback.answer()
 
-async def send_level(user_id):
+# --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
+async def send_level(user_id, message_to_edit):
     user_data = user_db[user_id]
-    level_id = user_data["level"]
-    
-    # Якщо рівні закінчились
-    if level_id not in SCENARIOS:
-        score = user_data["score"]
-        verdict = "Справжній Стоїк 🏛" if score > 15 else "Учень початківець 👶"
-        
-        # Кнопка повернення в меню
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
-        
-        await bot.send_message(user_id, f"🏁 **Фініш!**\nТвій рахунок: {score}\nВердикт: {verdict}", reply_markup=kb)
+    current_level = user_data["level"]
+    max_level = len(SCENARIOS)
+
+    # Перевірка на перемогу (якщо рівень став більшим за максимальний)
+    if current_level > max_level:
+        # Логіка перемоги
         return
 
-    scenario = SCENARIOS[level_id]
-    
-    # Створення кнопок
+    scenario = SCENARIOS.get(current_level)
+    scenario_text = f"🛡️ **Рівень {current_level}/{max_level}**\n\n" + scenario['text']
+
+    # Створення клавіатури для поточного рівня
     builder = InlineKeyboardBuilder()
-    for opt in scenario["options"]:
-        builder.button(text=opt["text"], callback_data=opt["id"])
-    builder.adjust(1)
+    for option in scenario['options']:
+        # Важливо: використовуємо game_<option_id> для фільтрації
+        builder.button(
+            text=option['text'],
+            callback_data=f"game_{option['id']}"
+        )
+
+    # --- КНОПКА "НАЗАД" ТУТ ---
+    builder.button(text="🔙 В меню", callback_data="back_home") # 👈 ДОДАНО
     
-    await bot.send_message(
-        user_id, 
-        f"⚔️ **Рівень {level_id}**\n\n{scenario['text']}", 
-        reply_markup=builder.as_markup(), 
+    builder.adjust(1)
+
+    await message_to_edit.edit_text(
+        scenario_text,
+        reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
 
-# Цей хендлер ловить вибір варіантів у грі (усі інші callback-и)
-@dp.callback_query()
+# Цей хендлер ловить вибір варіантів у грі (усі callback-и, які не є системними)
+# Переконайтеся, що back_to_main_menu() знаходиться ВИЩЕ у коді!
+@dp.callback_query(lambda c: c.data not in ["back_home", "mode_quotes", "mode_memento", "game_start"])
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
-    # Перевірка: чи є юзер в базі і чи не натиснув він щось ліве
+    # 1. Перевірка: чи є юзер в базі 
     if user_id not in user_db:
         await callback.answer("Почни спочатку через /start")
         return
@@ -218,13 +232,13 @@ async def handle_game_choice(callback: types.CallbackQuery):
     # Якщо ми в процесі гри
     if level_id in SCENARIOS:
         scenario = SCENARIOS[level_id]
-        choice_id = callback.data
+        choice_id = callback.data.replace("game_", "") # Прибираємо можливий префікс 'game_'
         
         # Шукаємо, яку опцію обрав юзер
         selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
         
         if selected_option:
-            # Оновлюємо статс
+            # 2. Оновлюємо статс
             user_data["score"] += selected_option["score"]
             user_data["level"] += 1
             
@@ -234,12 +248,26 @@ async def handle_game_choice(callback: types.CallbackQuery):
                 parse_mode="Markdown"
             )
             
-            # Чекаємо трохи і даємо наступний рівень
+            # 3. Чекаємо трохи і даємо наступний рівень
             await asyncio.sleep(2)
-            await send_level(user_id)
+            
+            max_level = len(SCENARIOS)
+            
+            if user_data["level"] > max_level:
+                # ЛОГІКА ПЕРЕМОГИ
+                final_score = user_data["score"]
+                await callback.message.edit_text(
+                    f"🏆 **ПЕРЕМОГА!** Ти завершив усі {max_level} рівнів!\n"
+                    f"Твій фінальний рахунок: **{final_score}**\n"
+                    f"«Бути стійким — означає керувати собою, а не світом.»",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
+                )
+                del user_db[user_id]
+            else:
+                await send_level(user_id, callback.message) # Передаємо message_to_edit
     
     await callback.answer()
-
+    
 async def main():
     await dp.start_polling(bot)
 
