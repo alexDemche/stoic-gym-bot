@@ -16,7 +16,7 @@ from aiogram.fsm.context import FSMContext
 from db import Database
 
 # Імпортуємо базу цитат з data.py
-from data import STOIC_DB, SCENARIOS
+from data import STOIC_DB, SCENARIOS, HELP_TEXT
 
 # --- НАЛАШТУВАННЯ ---
 load_dotenv()
@@ -43,7 +43,8 @@ def get_main_menu():
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
-    builder.button(text="🏆 Топ Стоїків(юзерів)", callback_data="mode_top")
+    builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
+    builder.button(text="📚 Допомога", callback_data="show_help")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -317,18 +318,20 @@ async def send_level(user_id, message_to_edit):
 # Додаємо команду /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    help_text = (
-        "📚 **Гід по Stoic Trainer**\n\n"
-        "Я створений, щоб допомогти тобі практикувати стоїцизм через інтерактивні вправи:\n\n"
-        "1. **⚔️ Stoic Gym (Гра):** 40 щоденних ситуацій, де ти обираєш стоїчну реакцію.\n"
-        "   👉 *Мета:* Набрати максимальну кількість балів мудрості.\n\n"
-        "2. **🧙‍♂️ Оракул:** Випадкові цитати від Сенеки та Марка Аврелія для роздумів.\n\n"
-        "3. **⏳ Memento Mori:** Нагадування про цінність часу (потрібна дата народження).\n\n"
-        "4. **🏆 Топ Стоїків:** Таблиця лідерів за балами мудрості.\n\n"
-        "Якщо загубився, завжди тисни /start, або кнопку '🔙 В меню'."
+    # Використовуємо змінну з data.py
+    await message.answer(HELP_TEXT, parse_mode="Markdown")
+   
+# хендлер, який буде ловити callback_data="show_help" 
+@dp.callback_query(F.data == "show_help")
+async def show_help_callback(callback: types.CallbackQuery):
+    # Використовуємо змінну з data.py
+    await callback.message.edit_text(
+        HELP_TEXT, 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]), 
+        parse_mode="Markdown"
     )
-    await message.answer(help_text, parse_mode="Markdown")
-    
+    await callback.answer()
+
 # додаємо функці. скинути прогрес
 @dp.callback_query(F.data == "reset_gym_confirm")
 async def confirm_reset(callback: types.CallbackQuery):
@@ -363,14 +366,12 @@ async def reset_gym(callback: types.CallbackQuery):
 
 # Цей хендлер ловить вибір варіантів у грі (усі callback-и, які не є системними)
 # Переконайтеся, що back_to_main_menu() знаходиться ВИЩЕ у коді!
-@dp.callback_query(lambda c: c.data not in ["back_home", "mode_quotes", "mode_memento", "game_start"])
+@dp.callback_query(lambda c: c.data not in ["back_home", "mode_quotes", "mode_memento", "game_start", "show_help"])
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
-    # Отримуємо дані з БД
     current_score, current_level = db.get_stats(user_id)
     
-    # Якщо рівень існує в сценаріях
     if current_level in SCENARIOS:
         scenario = SCENARIOS[current_level]
         choice_id = callback.data.replace("game_", "")
@@ -378,15 +379,26 @@ async def handle_game_choice(callback: types.CallbackQuery):
         selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
         
         if selected_option:
-            # Оновлюємо дані
-            new_score = current_score + selected_option["score"]
+            points_change = selected_option["score"] # 👈 ЗБЕРІГАЄМО ЗМІНУ БАЛІВ
+            
+            new_score = current_score + points_change
             new_level = current_level + 1
             
-            # ЗАПИСУЄМО В БАЗУ 💾
             db.update_game_progress(user_id, new_score, new_level)
             
+            # Визначаємо, як показати зміну балів
+            if points_change > 0:
+                score_feedback = f"🟢 **+{points_change} балів мудрості**"
+            elif points_change < 0:
+                score_feedback = f"🔴 **{points_change} балів (Не стоїчно)**"
+            else:
+                score_feedback = f"⚪ **0 балів**"
+
+
             await callback.message.edit_text(
-                f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n💡 *{selected_option['msg']}*",
+                f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
+                f"{score_feedback}\n\n" # 👈 ДОДАНО ФІДБЕК
+                f"💡 *{selected_option['msg']}*",
                 parse_mode="Markdown"
             )
             
@@ -394,13 +406,13 @@ async def handle_game_choice(callback: types.CallbackQuery):
             
             max_level = len(SCENARIOS)
             if new_level > max_level:
+                # ... (Логіка перемоги без змін) ...
+                final_score = new_score
                 await callback.message.edit_text(
                     f"🏆 **ПЕРЕМОГА!** Ти завершив усі {max_level} рівнів!\n"
-                    f"Твій фінальний рахунок: **{new_score}**",
+                    f"Твій фінальний рахунок: **{final_score}**",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
                 )
-                # Можна скинути гру, якщо хочеш:
-                # db.update_game_progress(user_id, 0, 1)
             else:
                 await send_level(user_id, callback.message)
     
