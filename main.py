@@ -294,6 +294,10 @@ async def send_level(user_id, message_to_edit):
 
     scenario = SCENARIOS.get(current_level)
     scenario_text = f"🛡️ **Рівень {current_level}/{max_level}**\n\n" + scenario['text']
+    
+    # Створюємо копію опцій, щоб не змінювати оригінальний порядок у базі назавжди
+    options = scenario['options'].copy()
+    random.shuffle(options)  #  ВИПАДКОВИЙ ПОРЯДОК КНОПОК
 
     # Створення клавіатури для поточного рівня
     builder = InlineKeyboardBuilder()
@@ -402,7 +406,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
                 parse_mode="Markdown"
             )
             
-            await asyncio.sleep(2)
+            await asyncio.sleep(4)
             
             max_level = len(SCENARIOS)
             if new_level > max_level:
