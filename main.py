@@ -201,7 +201,8 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 
     # --- ЗБЕРЕЖЕННЯ В БАЗУ ---
     # Зберігаємо у форматі РРРР-ММ-ДД (стандарт для баз даних)
-    await db.set_birthdate(message.from_user.id, birth_date.strftime("%Y-%m-%d"))
+    # Передаємо об'єкт date(), драйвер сам перетворить його у формат SQL
+    await db.set_birthdate(message.from_user.id, birth_date.date())
 
     # Генеруємо текст через нашу нову функцію
     result_text = generate_memento_text(birth_date)
@@ -263,7 +264,7 @@ async def start_game_from_button(callback: types.CallbackQuery):
 # added leaderboard callback
 @dp.callback_query(F.data == "mode_top")
 async def show_leaderboard(callback: types.CallbackQuery):
-    top_users = db.get_top_users(10)
+    top_users = await db.get_top_users(10)
 
     text = "🏆 **Алея Слави Стоїків**\n\n"
 
@@ -429,6 +430,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
                 # 3. КНОПКИ "ПРОДОВЖИТИ" / "В МЕНЮ"
                 kb.button(text="🔙 В меню", callback_data="back_home")
                 kb.button(text="▶️ Продовжити", callback_data="game_next")
+                kb.adjust(2)
                 
                 await callback.message.edit_text(
                     f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
