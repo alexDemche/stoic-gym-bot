@@ -28,7 +28,8 @@ class MementoMori(StatesGroup):
 
 # Тимчасова база даних користувачів в пам'яті
 # user_db = {} 
-db = Database('stoic.db')
+# db = Database('stoic.db')
+db = Database()
 
 # --- ІНІЦІАЛІЗАЦІЯ ---
 logging.basicConfig(level=logging.INFO)
@@ -426,14 +427,14 @@ async def handle_game_choice(callback: types.CallbackQuery):
                 )
             else:
                 # 3. КНОПКИ "ПРОДОВЖИТИ" / "В МЕНЮ"
-                kb.button(text="▶️ Продовжити", callback_data="game_next")
                 kb.button(text="🔙 В меню", callback_data="back_home")
+                kb.button(text="▶️ Продовжити", callback_data="game_next")
                 
                 await callback.message.edit_text(
                     f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
                     f"{score_feedback}\n\n"
                     f"💡 *{selected_option['msg']}*",
-                    reply_markup=kb.as_markup(), # 👈 ВІДОБРАЖАЄМО НОВІ КНОПКИ
+                    reply_markup=kb.as_markup(),
                     parse_mode="Markdown"
                 )
             
