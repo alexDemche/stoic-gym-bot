@@ -280,6 +280,17 @@ async def show_leaderboard(callback: types.CallbackQuery):
 
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     await callback.answer()
+    
+# --- НОВИЙ ХЕНДЛЕР: ПЕРЕХІД ДО НАСТУПНОГО РІВНЯ ---
+@dp.callback_query(F.data == "game_next")
+async def go_to_next_level(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # Викликаємо функцію, яка відобразить наступний рівень
+    # send_level сам бере поточний рівень з бази даних
+    await send_level(user_id, callback.message)
+    
+    await callback.answer()
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
@@ -293,15 +304,15 @@ async def send_level(user_id, message_to_edit):
         return
 
     scenario = SCENARIOS.get(current_level)
+    # 1. КОПІЮВАННЯ ТА ПЕРЕМІШУВАННЯ
+    options = scenario['options'].copy()
+    random.shuffle(options)
+    
     scenario_text = f"🛡️ **Рівень {current_level}/{max_level}**\n\n" + scenario['text']
     
-    # Створюємо копію опцій, щоб не змінювати оригінальний порядок у базі назавжди
-    options = scenario['options'].copy()
-    random.shuffle(options)  #  ВИПАДКОВИЙ ПОРЯДОК КНОПОК
-
     # Створення клавіатури для поточного рівня
     builder = InlineKeyboardBuilder()
-    for option in scenario['options']:
+    for option in options:
         # Важливо: використовуємо game_<option_id> для фільтрації
         builder.button(
             text=option['text'],
@@ -370,7 +381,7 @@ async def reset_gym(callback: types.CallbackQuery):
 
 # Цей хендлер ловить вибір варіантів у грі (усі callback-и, які не є системними)
 # Переконайтеся, що back_to_main_menu() знаходиться ВИЩЕ у коді!
-@dp.callback_query(lambda c: c.data not in ["back_home", "mode_quotes", "mode_memento", "game_start", "show_help"])
+@dp.callback_query(lambda c: c.data and c.data.startswith('game_') and c.data not in ["game_next"]) # Додаємо фільтр "game_next"
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
@@ -383,14 +394,14 @@ async def handle_game_choice(callback: types.CallbackQuery):
         selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
         
         if selected_option:
-            points_change = selected_option["score"] # 👈 ЗБЕРІГАЄМО ЗМІНУ БАЛІВ
-            
+            points_change = selected_option["score"]
             new_score = current_score + points_change
             new_level = current_level + 1
             
+            # --- Оновлення бази даних відбувається тут ---
             db.update_game_progress(user_id, new_score, new_level)
             
-            # Визначаємо, як показати зміну балів
+            # Визначаємо фідбек
             if points_change > 0:
                 score_feedback = f"🟢 **+{points_change} балів мудрості**"
             elif points_change < 0:
@@ -398,27 +409,37 @@ async def handle_game_choice(callback: types.CallbackQuery):
             else:
                 score_feedback = f"⚪ **0 балів**"
 
-
-            await callback.message.edit_text(
-                f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
-                f"{score_feedback}\n\n" # 👈 ДОДАНО ФІДБЕК
-                f"💡 *{selected_option['msg']}*",
-                parse_mode="Markdown"
-            )
-            
-            await asyncio.sleep(4)
+            # 1. СТВОРЕННЯ КЛАВІАТУРИ ДЛЯ ПРОДОВЖЕННЯ
+            kb = InlineKeyboardBuilder()
             
             max_level = len(SCENARIOS)
+            
             if new_level > max_level:
-                # ... (Логіка перемоги без змін) ...
+                # 2. ЛОГІКА ПЕРЕМОГИ
                 final_score = new_score
+                
                 await callback.message.edit_text(
                     f"🏆 **ПЕРЕМОГА!** Ти завершив усі {max_level} рівнів!\n"
-                    f"Твій фінальний рахунок: **{final_score}**",
+                    f"Твій фінальний рахунок: **{final_score}**\n"
+                    f"«Невдача — це ціна навчання, успіх — це результат практики.»",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
                 )
             else:
-                await send_level(user_id, callback.message)
+                # 3. КНОПКИ "ПРОДОВЖИТИ" / "В МЕНЮ"
+                kb.button(text="▶️ Продовжити", callback_data="game_next")
+                kb.button(text="🔙 В меню", callback_data="back_home")
+                
+                await callback.message.edit_text(
+                    f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
+                    f"{score_feedback}\n\n"
+                    f"💡 *{selected_option['msg']}*",
+                    reply_markup=kb.as_markup(), # 👈 ВІДОБРАЖАЄМО НОВІ КНОПКИ
+                    parse_mode="Markdown"
+                )
+            
+            # Видаляємо стару паузу
+            # await asyncio.sleep(4) 
+            # await send_level(user_id, callback.message) # Це тепер робить game_next
     
     await callback.answer()
     
