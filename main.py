@@ -152,19 +152,20 @@ async def reset_memento_date(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(MementoMori.waiting_for_birthdate)
     await callback.answer()
 
+#  Моменто морі логіка
 @dp.callback_query(F.data == "mode_memento")
 async def start_memento(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     
-    # Перевіряємо, чи є збережена дата в базі
-    saved_date_str = await db.get_birthdate(user_id)
+    # Отримуємо дату з бази (asyncpg повертає об'єкт datetime.date або None)
+    saved_date = await db.get_birthdate(user_id)
     
-    if saved_date_str:
-        # Якщо дата є, перетворюємо її назад у datetime і показуємо результат
-        birth_date = datetime.strptime(saved_date_str, "%Y-%m-%d")
+    if saved_date:
+        # ВАЖЛИВО: saved_date — це вже об'єкт date.
+        birth_date = datetime(saved_date.year, saved_date.month, saved_date.day)
+        
         text = generate_memento_text(birth_date)
         
-        # Додаємо кнопку, щоб змінити дату, якщо треба
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Змінити дату", callback_data="reset_memento")],
             [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
