@@ -1,4 +1,4 @@
-import psycopg2
+import asyncpg
 import os
 
 # Використовуємо DATABASE_URL, яку надає Railway
@@ -8,91 +8,73 @@ class Database:
     def __init__(self):
         if not DATABASE_URL:
             raise ValueError("DATABASE_URL environment variable is not set!")
-        
-        self.conn = self.get_connection()
-        self.create_tables()
+        self.pool = None
 
-    def get_connection(self):
-        """Встановлює та повертає з'єднання з PostgreSQL"""
-        # Параметри з'єднання беруться автоматично з DATABASE_URL
-        return psycopg2.connect(DATABASE_URL)
+    async def connect(self):
+        """Створює пул з'єднань"""
+        self.pool = await asyncpg.create_pool(DATABASE_URL)
 
-    def create_tables(self):
+    async def create_tables(self):
         """Створює таблицю користувачів, якщо її ще немає"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        user_id BIGINT PRIMARY KEY,
-                        username TEXT,
-                        score INTEGER DEFAULT 0,
-                        level INTEGER DEFAULT 1,
-                        birthdate DATE
-                    )
-                """)
-            self.conn.commit()
-
-    def user_exists(self, user_id):
-        """Перевіряє, чи є користувач у базі"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
-                return bool(cur.fetchone())
-
-    def add_user(self, user_id, username):
-        """Додає нового користувача або оновлює його ім'я"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                if not self.user_exists(user_id):
-                    cur.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (user_id, username))
-                else:
-                    cur.execute("UPDATE users SET username = %s WHERE user_id = %s", (username, user_id))
-            self.conn.commit()
-
-    def get_stats(self, user_id):
-        """Повертає статистику (score, level)"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT score, level FROM users WHERE user_id = %s", (user_id,))
-                result = cur.fetchone()
-                return result if result else (0, 1)
-
-    def update_game_progress(self, user_id, score, level):
-        """Оновлює рахунок та рівень"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("UPDATE users SET score = %s, level = %s WHERE user_id = %s", (score, level, user_id))
-            self.conn.commit()
-
-    def set_birthdate(self, user_id, birthdate):
-        """Зберігає дату народження"""
-        # birthdate тут має бути об'єктом datetime.date
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("UPDATE users SET birthdate = %s WHERE user_id = %s", (birthdate, user_id))
-            self.conn.commit()
-
-    def get_birthdate(self, user_id):
-        """Отримує дату народження (повертає об'єкт date або None)"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT birthdate FROM users WHERE user_id = %s", (user_id,))
-                result = cur.fetchone()
-                return result[0] if result and result[0] else None
-
-    def get_top_users(self, limit=10):
-        """Повертає топ-користувачів"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT username, score FROM users ORDER BY score DESC LIMIT %s",
-                    (limit,)
+        async with self.pool.acquire() as conn: # Використовуємо з'єднання з пулу
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    score INTEGER DEFAULT 0,
+                    level INTEGER DEFAULT 1,
+                    birthdate DATE
                 )
-                return cur.fetchall()
+            """)
 
-    def count_users(self):
+    async def user_exists(self, user_id):
+        """Перевіряє, чи є користувач у базі"""
+        async with self.pool.acquire() as conn:
+            result = await conn.fetchval("SELECT 1 FROM users WHERE user_id = $1", user_id)
+            return bool(result)
+
+    async def add_user(self, user_id, username):
+        """Додає нового користувача або оновлює його ім'я"""
+        # Увага: тут ми не викликаємо user_exists, щоб уникнути конфлікту
+        # Використовуємо синтаксис SQL: ON CONFLICT
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO users (user_id, username) VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE SET username = $2
+            """, user_id, username)
+
+    async def get_stats(self, user_id):
+        """Повертає статистику (score, level)"""
+        async with self.pool.acquire() as conn:
+            result = await conn.fetchrow("SELECT score, level FROM users WHERE user_id = $1", user_id)
+            return result if result else (0, 1)
+
+    async def update_game_progress(self, user_id, score, level):
+        """Оновлює рахунок та рівень"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE users SET score = $1, level = $2 WHERE user_id = $3", score, level, user_id)
+
+    async def set_birthdate(self, user_id, birthdate):
+        """Зберігає дату народження"""
+        async with self.pool.acquire() as conn:
+            # birthdate має бути об'єктом datetime.date
+            await conn.execute("UPDATE users SET birthdate = $1 WHERE user_id = $2", birthdate, user_id)
+
+    async def get_birthdate(self, user_id):
+        """Отримує дату народження"""
+        async with self.pool.acquire() as conn:
+            result = await conn.fetchval("SELECT birthdate FROM users WHERE user_id = $1", user_id)
+            return result # поверне datetime.date або None
+
+    async def get_top_users(self, limit=10):
+        """Повертає топ-користувачів"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                "SELECT username, score FROM users ORDER BY score DESC LIMIT $1",
+                limit
+            )
+
+    async def count_users(self):
         """Рахує кількість користувачів"""
-        with self.conn:
-            with self.conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM users")
-                return cur.fetchone()[0]
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM users")

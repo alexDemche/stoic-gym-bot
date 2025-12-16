@@ -63,7 +63,7 @@ def get_quote_keyboard():
 async def cmd_start(message: types.Message):
     # Передаємо ID та Ім'я (first_name)
     user_name = message.from_user.first_name if message.from_user.first_name else "друже"
-    db.add_user(message.from_user.id, user_name)
+    await db.add_user(message.from_user.id, user_name)
     
     await message.answer(
         f"👋 **Вітаю, {user_name} в Stoic Trainer!**\n\n"
@@ -90,7 +90,7 @@ async def cmd_stats(message: types.Message):
     # Тут можна додати перевірку на твій ID, щоб цю команду міг викликати тільки ти
     # Наприклад: if message.from_user.id != ТВІЙ_ID: return
     
-    count = db.count_users()
+    count = await db.count_users()
     await message.answer(f"📊 **Статистика бота:**\n\n👤 Користувачів: **{count}**", parse_mode="Markdown")
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
@@ -156,7 +156,7 @@ async def start_memento(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     
     # Перевіряємо, чи є збережена дата в базі
-    saved_date_str = db.get_birthdate(user_id)
+    saved_date_str = await db.get_birthdate(user_id)
     
     if saved_date_str:
         # Якщо дата є, перетворюємо її назад у datetime і показуємо результат
@@ -201,7 +201,7 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 
     # --- ЗБЕРЕЖЕННЯ В БАЗУ ---
     # Зберігаємо у форматі РРРР-ММ-ДД (стандарт для баз даних)
-    db.set_birthdate(message.from_user.id, birth_date.strftime("%Y-%m-%d"))
+    await db.set_birthdate(message.from_user.id, birth_date.strftime("%Y-%m-%d"))
 
     # Генеруємо текст через нашу нову функцію
     result_text = generate_memento_text(birth_date)
@@ -220,10 +220,10 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 async def start_gym(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     # Оновлюємо ім'я при вході в гру
-    db.add_user(user_id, callback.from_user.first_name)
+    await db.add_user(user_id, callback.from_user.first_name)
     
     # Отримуємо поточний прогрес
-    score, level = db.get_stats(user_id)
+    score, level = await db.get_stats(user_id)
 
     builder = InlineKeyboardBuilder()
     builder.button(text="▶️ Продовжити тренування", callback_data="game_start")
@@ -296,7 +296,7 @@ async def go_to_next_level(callback: types.CallbackQuery):
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
     # Отримуємо дані з БД
-    score, current_level = db.get_stats(user_id)
+    score, current_level = await db.get_stats(user_id)
     max_level = len(SCENARIOS)
 
     # Перевірка на перемогу (якщо рівень став більшим за максимальний)
@@ -367,7 +367,7 @@ async def confirm_reset(callback: types.CallbackQuery):
 async def reset_gym(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     # Скидаємо в базі: score=0, level=1
-    db.update_game_progress(user_id, 0, 1) 
+    await db.update_game_progress(user_id, 0, 1) 
     
     await callback.message.edit_text(
         "✅ **Прогрес скинуто!**\n\n"
@@ -386,7 +386,7 @@ async def reset_gym(callback: types.CallbackQuery):
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     
-    current_score, current_level = db.get_stats(user_id)
+    current_score, current_level = await db.get_stats(user_id)
     
     if current_level in SCENARIOS:
         scenario = SCENARIOS[current_level]
@@ -400,7 +400,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
             new_level = current_level + 1
             
             # --- Оновлення бази даних відбувається тут ---
-            db.update_game_progress(user_id, new_score, new_level)
+            await db.update_game_progress(user_id, new_score, new_level)
             
             # Визначаємо фідбек
             if points_change > 0:
@@ -445,7 +445,16 @@ async def handle_game_choice(callback: types.CallbackQuery):
     await callback.answer()
     
 async def main():
+    # ... (ініціалізація бота, диспетчера, роутера)
+    
+    # 1. ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ АСИНХРОННО
+    await db.connect()
+    await db.create_tables() # Створюємо таблиці після підключення
+    
+    # 2. ЗАПУСК БОТА
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    # db = Database() # Цей рядок прибрати!
+    # Тобі потрібно ініціалізувати db = Database() як глобальну змінну, а потім викликати main()
     asyncio.run(main())
