@@ -78,3 +78,9 @@ class Database:
         """Рахує кількість користувачів"""
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT COUNT(*) FROM users")
+        
+    async def get_all_users(self):
+        """Повертає список всіх user_id"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT user_id FROM users")
+            return [row['user_id'] for row in rows]

@@ -3,17 +3,17 @@ import logging
 import random
 import os
 from dotenv import load_dotenv
+from db import Database
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-from datetime import datetime
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from db import Database
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Імпортуємо базу цитат з data.py
 from data import STOIC_DB, SCENARIOS, HELP_TEXT
@@ -37,7 +37,6 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # --- КЛАВІАТУРИ ---
-
 def get_main_menu():
     """Головне меню"""
     builder = InlineKeyboardBuilder()
@@ -448,6 +447,32 @@ async def handle_game_choice(callback: types.CallbackQuery):
     
     await callback.answer()
     
+# --- Розсилка повідомлень юзерам ---
+async def send_daily_quote():
+    """Розсилає випадкову цитату всім користувачам"""
+    users = await db.get_all_users()
+    
+    if not users:
+        return
+
+    # Вибираємо випадкову цитату
+    quote = random.choice(STOIC_DB)
+    text = f"☀️ **Мудрість на сьогодні:**\n\n_{quote['text']}_\n\n— {quote['author']}\n\n👉 /start — Пройти тренування"
+
+    count = 0
+    for user_id in users:
+        try:
+            await bot.send_message(user_id, text, parse_mode="Markdown")
+            count += 1
+            # Робимо маленьку паузу, щоб Telegram не заблокував за спам (ліміти)
+            await asyncio.sleep(0.05) 
+        except Exception as e:
+            # Користувач міг заблокувати бота
+            logging.error(f"Не вдалося надіслати повідомлення користувачу {user_id}: {e}")
+            
+    logging.info(f"✅ Розсилка завершена. Отримали: {count} користувачів.")
+
+    
 async def main():
     # ... (ініціалізація бота, диспетчера, роутера)
     
@@ -455,8 +480,49 @@ async def main():
     await db.connect()
     await db.create_tables() # Створюємо таблиці після підключення
     
+    # --- ПЛАНУВАЛЬНИК (SCHEDULER) ---
+    scheduler = AsyncIOScheduler()
+    
+    # Додаємо задачу: запускати send_daily_quote щодня о 9:00 ранку
+    # timezone="Europe/Kyiv" бажано вказати, якщо сервер в іншому часовому поясі,
+    # але поки можна залишити за замовчуванням (UTC). 
+    # Якщо Railway в UTC, то 9:00 UTC = 11:00 або 12:00 за Києвом.
+    # Давай поставимо 7:00 UTC (це 9:00 або 10:00 за Києвом)
+    scheduler.add_job(send_daily_quote, trigger='cron', hour=7, minute=0)
+    
+    scheduler.start()
+    
     # 2. ЗАПУСК БОТА
     await dp.start_polling(bot)
+    
+# --- АДМІН-КОМАНДА: РОЗСИЛКА ---
+# Використання: /broadcast Текст повідомлення
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message):
+    ADMIN_ID = 7597463225
+    if message.from_user.id != ADMIN_ID: return
+    
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("⚠️ Помилка. Використання: `/broadcast Ваш текст`")
+        return
+
+    broadcast_text = f"📢 **Оголошення:**\n\n{parts[1]}"
+    
+    users = await db.get_all_users()
+    count = 0
+    
+    await message.answer(f"⏳ Починаю розсилку на {len(users)} користувачів...")
+    
+    for user_id in users:
+        try:
+            await bot.send_message(user_id, broadcast_text, parse_mode="Markdown")
+            count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass # Ігноруємо помилки (наприклад, юзер заблокував бота)
+            
+    await message.answer(f"✅ Розсилка завершена! Успішно: {count}")
 
 if __name__ == "__main__":
     # db = Database() # Цей рядок прибрати!
