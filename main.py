@@ -86,6 +86,9 @@ async def show_profile(callback: types.CallbackQuery):
     score, level = await db.get_stats(user_id)
     birth_date = await db.get_birthdate(user_id)
     
+    # Отримуємо енергію
+    energy = await db.check_energy(user_id)
+    
     # 2. Визначаємо ранг
     rank = get_stoic_rank(score)
     
@@ -113,7 +116,8 @@ async def show_profile(callback: types.CallbackQuery):
         f"🏅 Звання: **{rank}**\n"
         f"💎 Бали мудрості: **{score}**\n"
         f"{progress_bar}\n\n"
-        f"⚔️ Рівень в Gym: **{level}**\n"
+        f"⚡ Енергія: **{energy}/5**\n"
+        f"\n⚔️ Пройдено рівнів: **{level - 1}**\n"
         f"⏳ Memento Mori: **{memento_status}**"
     )
 
@@ -380,41 +384,55 @@ async def go_to_next_level(callback: types.CallbackQuery):
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
-    # Отримуємо дані з БД
+    # 1. ПЕРЕВІРКА ЕНЕРГІЇ
+    energy = await db.check_energy(user_id)
+    
+    if energy <= 0:
+        # Якщо енергія скінчилась
+        await message_to_edit.edit_text(
+            "🌙 **Енергія вичерпана**\n\n"
+            "Стоїцизм вчить поміркованості. Ти добре попрацював сьогодні.\n"
+            "Обдумай отримані уроки і повертайся завтра з новими силами.\n\n"
+            "⚡ Енергія відновиться зранку.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]),
+            parse_mode="Markdown"
+        )
+        return # Зупиняємо функцію, рівень не показуємо
+
+    # 2. ОТРИМАННЯ СТАТИСТИКИ
     score, current_level = await db.get_stats(user_id)
     max_level = len(SCENARIOS)
 
-    # Перевірка на перемогу (якщо рівень став більшим за максимальний)
     if current_level > max_level:
-        # Логіка перемоги
+        await message_to_edit.edit_text(
+            f"🏆 **ПЕРЕМОГА!** Ти пройшов увесь шлях!\nТвій рахунок: {score}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
+        )
         return
 
+    # 3. СПИСАННЯ ЕНЕРГІЇ (Бо ми показуємо рівень)
+    await db.decrease_energy(user_id)
+    # Отримуємо нове значення для відображення
+    new_energy = energy - 1 
+
     scenario = SCENARIOS.get(current_level)
-    # 1. КОПІЮВАННЯ ТА ПЕРЕМІШУВАННЯ
     options = scenario['options'].copy()
     random.shuffle(options)
     
-    scenario_text = f"🛡️ **Рівень {current_level}/{max_level}**\n\n" + scenario['text']
+    # Додаємо індикатор енергії в текст
+    scenario_text = (
+        f"🛡️ **Рівень {current_level}/{max_level}** | ⚡ {new_energy}/5\n\n" 
+        + scenario['text']
+    )
     
-    # Створення клавіатури для поточного рівня
     builder = InlineKeyboardBuilder()
     for option in options:
-        # Важливо: використовуємо game_<option_id> для фільтрації
-        builder.button(
-            text=option['text'],
-            callback_data=f"game_{option['id']}"
-        )
+        builder.button(text=option['text'], callback_data=f"game_{option['id']}")
 
-    # --- КНОПКА "НАЗАД" ТУТ ---
-    builder.button(text="🔙 В меню", callback_data="back_home") # 👈 ДОДАНО
-    
+    builder.button(text="🔙 В меню", callback_data="back_home")
     builder.adjust(1)
 
-    await message_to_edit.edit_text(
-        scenario_text,
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+    await message_to_edit.edit_text(scenario_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
     
 # Додаємо команду /help
 @dp.message(Command("help"))

@@ -1,5 +1,6 @@
 import asyncpg
 import os
+from datetime import datetime
 
 # Використовуємо DATABASE_URL, яку надає Railway
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -15,17 +16,28 @@ class Database:
         self.pool = await asyncpg.create_pool(DATABASE_URL)
 
     async def create_tables(self):
-        """Створює таблицю користувачів, якщо її ще немає"""
-        async with self.pool.acquire() as conn: # Використовуємо з'єднання з пулу
+        """Створює таблицю користувачів та оновлює структуру"""
+        async with self.pool.acquire() as conn:
+            # 1. Створення таблиці (якщо немає)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
                     username TEXT,
                     score INTEGER DEFAULT 0,
                     level INTEGER DEFAULT 1,
-                    birthdate DATE
+                    birthdate DATE,
+                    energy INTEGER DEFAULT 5,
+                    last_active_date DATE DEFAULT CURRENT_DATE
                 )
             """)
+            
+            # 2. МІГРАЦІЯ: Додаємо колонки для старих користувачів (якщо їх немає)
+            # Це безпечний код: якщо колонка є, він нічого не зламає
+            try:
+                await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS energy INTEGER DEFAULT 5")
+                await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_date DATE DEFAULT CURRENT_DATE")
+            except Exception as e:
+                print(f"Migration log: {e}")
 
     async def user_exists(self, user_id):
         """Перевіряє, чи є користувач у базі"""
@@ -84,3 +96,31 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("SELECT user_id FROM users")
             return [row['user_id'] for row in rows]
+        
+    async def check_energy(self, user_id):
+        """
+        Перевіряє енергію. 
+        Якщо настав новий день - відновлює до 5.
+        Повертає поточну енергію.
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT energy, last_active_date FROM users WHERE user_id = $1", user_id)
+            
+            if not row:
+                return 0
+            
+            current_energy = row['energy']
+            last_date = row['last_active_date']
+            today = datetime.now().date() # Потрібен import datetime зверху файлу db.py!
+            
+            # Якщо останній раз грали не сьогодні — відновлюємо енергію
+            if last_date < today:
+                current_energy = 5
+                await conn.execute("UPDATE users SET energy = 5, last_active_date = $1 WHERE user_id = $2", today, user_id)
+            
+            return current_energy
+
+    async def decrease_energy(self, user_id):
+        """Зменшує енергію на 1"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE users SET energy = energy - 1 WHERE user_id = $1", user_id)
