@@ -29,6 +29,9 @@ class MementoMori(StatesGroup):
     
 class FeedbackState(StatesGroup):
     waiting_for_message = State()
+    
+class JournalState(StatesGroup):
+    waiting_for_entry = State()
 
 # Тимчасова база даних користувачів в пам'яті
 # user_db = {} 
@@ -99,6 +102,7 @@ async def show_profile(callback: types.CallbackQuery):
     elif score < 150: next_rank_score = 150
     elif score < 300: next_rank_score = 300
     elif score < 500: next_rank_score = 500
+    else: next_rank_score = score # Вже макс
     
     progress_bar = ""
     if score < 500:
@@ -131,6 +135,7 @@ async def show_profile(callback: types.CallbackQuery):
     # Додаємо кнопку URL
     builder = InlineKeyboardBuilder()
     builder.button(text="📢 Похвалитися друзям", url=share_url)
+    builder.button(text="📜 Мої роздуми", callback_data="journal_view")
     builder.button(text="🔙 В меню", callback_data="back_home")
     builder.adjust(1)
     
@@ -381,6 +386,53 @@ async def go_to_next_level(callback: types.CallbackQuery):
     await send_level(user_id, callback.message)
     
     await callback.answer()
+  
+# --- ХЕНДЛЕР: запис до журналу ---  
+@dp.callback_query(F.data == "journal_write")
+async def start_journal(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "📝 **Щоденник Стоїка**\n\n"
+        "Марк Аврелій писав: «Наші думки визначають якість нашого життя».\n\n"
+        "Запиши свій головний урок за сьогодні або те, за що ти вдячний. "
+        "Це допоможе закріпити мудрість на практиці.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Скасувати", callback_data="back_home")]]),
+        parse_mode="Markdown"
+    )
+    await state.set_state(JournalState.waiting_for_entry)
+    await callback.answer()
+
+@dp.message(JournalState.waiting_for_entry)
+async def process_journal(message: types.Message, state: FSMContext):
+    user_text = message.text
+    if len(user_text) < 5:
+        await message.answer("Спробуй написати трохи розгорнутіше. Це для твоєї ж користі.")
+        return
+
+    await db.save_journal_entry(message.from_user.id, user_text)
+    
+    await message.answer(
+        "✅ **Запис збережено.**\n\n"
+        "Ти приділив час рефлексії — це і є шлях справжнього стоїка. Повертайся завтра за новими викликами!",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]),
+        parse_mode="Markdown"
+    )
+    await state.clear()
+  
+# --- ХЕНДЛЕР: подививтись журнал ---    
+@dp.callback_query(F.data == "journal_view")
+async def view_journal(callback: types.CallbackQuery):
+    entries = await db.get_journal_entries(callback.from_user.id)
+    
+    if not entries:
+        text = "Твій щоденник поки що порожній. Час зробити перший запис!"
+    else:
+        text = "📜 **Твої останні роздуми:**\n\n"
+        for entry in entries:
+            date_str = entry['created_at'].strftime("%d.%m.%y")
+            text += f"🗓 *{date_str}*: {entry['entry_text']}\n\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="mode_profile")]])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
@@ -388,16 +440,22 @@ async def send_level(user_id, message_to_edit):
     energy = await db.check_energy(user_id)
     
     if energy <= 0:
-        # Якщо енергія скінчилась
+        # 1. Спочатку створюємо клавіатуру з кнопками
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📝 Запис у щоденник", callback_data="journal_write")
+        kb.button(text="🔙 В меню", callback_data="back_home")
+        kb.adjust(1)
+        
+        # 2. Відправляємо текст РАЗОМ із цією клавіатурою
         await message_to_edit.edit_text(
             "🌙 **Енергія вичерпана**\n\n"
             "Стоїцизм вчить поміркованості. Ти добре попрацював сьогодні.\n"
             "Обдумай отримані уроки і повертайся завтра з новими силами.\n\n"
             "⚡ Енергія відновиться зранку.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]),
+            reply_markup=kb.as_markup(), # Використовуємо створену kb
             parse_mode="Markdown"
         )
-        return # Зупиняємо функцію, рівень не показуємо
+        return # Зупиняємо функцію
 
     # 2. ОТРИМАННЯ СТАТИСТИКИ
     score, current_level = await db.get_stats(user_id)
@@ -575,26 +633,21 @@ async def send_daily_quote():
 
     
 async def main():
-    # ... (ініціалізація бота, диспетчера, роутера)
-    
-    # 1. ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ АСИНХРОННО
+    # 1. ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ
     await db.connect()
-    await db.create_tables() # Створюємо таблиці після підключення
+    await db.create_tables()
     
-    # --- ПЛАНУВАЛЬНИК (SCHEDULER) ---
+    # 2. ПЛАНУВАЛЬНИК (SCHEDULER)
     scheduler = AsyncIOScheduler()
-    
-    # Додаємо задачу: запускати send_daily_quote щодня о 9:00 ранку
-    # timezone="Europe/Kyiv" бажано вказати, якщо сервер в іншому часовому поясі,
-    # але поки можна залишити за замовчуванням (UTC). 
-    # Якщо Railway в UTC, то 9:00 UTC = 11:00 або 12:00 за Києвом.
-    # Давай поставимо 7:00 UTC (це 9:00 або 10:00 за Києвом)
+    # 07:30 UTC = 09:30 за Києвом
     scheduler.add_job(send_daily_quote, trigger='cron', hour=7, minute=30)
-    
     scheduler.start()
     
-    # 2. ЗАПУСК БОТА
-    await dp.start_polling(bot)
+    # 3. ЗАПУСК БОТА (Видаляємо зайві коментарі, просто запускаємо)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
     
 # --- АДМІН-КОМАНДА: РОЗСИЛКА ---
 # Використання: /broadcast Текст повідомлення

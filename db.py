@@ -30,6 +30,14 @@ class Database:
                     last_active_date DATE DEFAULT CURRENT_DATE
                 )
             """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS journal (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    entry_text TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             
             # 2. МІГРАЦІЯ: Додаємо колонки для старих користувачів (якщо їх немає)
             # Це безпечний код: якщо колонка є, він нічого не зламає
@@ -124,3 +132,19 @@ class Database:
         """Зменшує енергію на 1"""
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE users SET energy = energy - 1 WHERE user_id = $1", user_id)
+            
+    async def save_journal_entry(self, user_id, text):
+    """Зберігає запис у щоденник"""
+    async with self.pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO journal (user_id, entry_text) VALUES ($1, $2)",
+            user_id, text
+        )
+
+    async def get_journal_entries(self, user_id, limit=5):
+        """Отримує останні записи щоденника"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                "SELECT entry_text, created_at FROM journal WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+                user_id, limit
+            )
