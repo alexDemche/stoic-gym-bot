@@ -447,13 +447,12 @@ async def send_level(user_id, message_to_edit):
         stats_text = ""
         
         if summary:
-            # Аналізуємо, як пройшов день
             if summary['mistakes'] == 0:
-                feedback_text = "🌟 **Бездоганний день!** Твій розум був гострим, як меч. Ти не піддався емоціям жодного разу."
+                feedback_text = "🌟 **Бездоганний день!** Твій розум був гострим, як меч."
             elif summary['mistakes'] > summary['wisdoms']:
-                feedback_text = "🌪 **День випробувань.** Сьогодні емоції часто брали гору. Не картай себе, але проаналізуй помилки."
+                feedback_text = "🌪 **День випробувань.** Сьогодні емоції часто брали гору."
             else:
-                feedback_text = "⚖️ **Гідний результат.** Ти діяв зважено, хоча іноді пристрасті відволікали тебе."
+                feedback_text = "⚖️ **Гідний результат.** Ти діяв зважено."
                 
             stats_text = (
                 f"\n\n📊 **Підсумок сесії:**\n"
@@ -462,34 +461,33 @@ async def send_level(user_id, message_to_edit):
                 f"💎 Зароблено балів: **{summary['points']}**"
             )
         else:
-            # На випадок, якщо історія пуста (рідкісний кейс)
             feedback_text = "Ти добре попрацював сьогодні."
 
-        # Створюємо клавіатуру: Щоденник + Вихід
         kb = InlineKeyboardBuilder()
         kb.button(text="📝 Запис у щоденник", callback_data="journal_write")
         kb.button(text="🔙 В меню", callback_data="back_home")
         kb.adjust(1)
         
+        # 👇 ОНОВЛЕНИЙ ТЕКСТ ЗІ ЩОДЕННИКОМ 👇
         await message_to_edit.edit_text(
             f"🌙 **Енергія вичерпана**\n\n"
             f"{feedback_text}"
             f"{stats_text}\n\n"
-            "Стоїцизм вимагає пауз для осмислення.\n"
+            "🧘‍♂️ **Стоїцизм вимагає пауз для осмислення.**\n"
             "Обдумай отримані уроки і повертайся завтра з новими силами.\n\n"
+            "✍️ **Порада:** Щоб не втратити важливі думки, запиши їх зараз у **Щоденник**.\n\n"
             "⚡ Енергія відновиться зранку.",
             reply_markup=kb.as_markup(),
             parse_mode="Markdown"
         )
-        return # Зупиняємо функцію, рівень не показуємо
+        return
 
-    # 2. ОТРИМАННЯ СТАТИСТИКИ ТА РІВНЯ
+    # 2. ОТРИМАННЯ СТАТИСТИКИ
     score, current_level = await db.get_stats(user_id)
     max_level = len(SCENARIOS)
 
-    # 3. ПЕРЕВІРКА НА ПЕРЕМОГУ (Всі рівні пройдено)
+    # 3. ПЕРЕВІРКА НА ПЕРЕМОГУ
     if current_level > max_level:
-        # Визначаємо фінальний ранг
         rank = get_stoic_rank(score)
         
         final_msg = ""
@@ -508,39 +506,48 @@ async def send_level(user_id, message_to_edit):
             f"📜 **Вердикт Оракула:**\n_{final_msg}_\n\n"
             f"Це не кінець. Це лише початок застосування знань у реальному житті.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Почати шлях заново", callback_data="reset_gym_confirm")],
+                [InlineKeyboardButton(text="🔄 Почати заново", callback_data="reset_gym_confirm")],
                 [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
             ]),
             parse_mode="Markdown"
         )
         return
 
-    # 4. СПИСАННЯ ЕНЕРГІЇ ТА ПОКАЗ РІВНЯ
+    # 4. СПИСАННЯ ЕНЕРГІЇ
     await db.decrease_energy(user_id)
-    # Отримуємо нове значення для відображення (бо ми щойно списали 1)
     new_energy = energy - 1 
 
     scenario = SCENARIOS.get(current_level)
     
-    # Копіюємо і перемішуємо варіанти відповідей
+    # Копіюємо і перемішуємо варіанти
     options = scenario['options'].copy()
     random.shuffle(options)
     
-    # Формуємо текст рівня
-    scenario_text = (
-        f"🛡️ **Рівень {current_level}/{max_level}** | ⚡ {new_energy}/5\n\n" 
-        + scenario['text']
-    )
-    
-    # Створюємо кнопки варіантів
+    # 👇 ЛОГІКА A/B/C/D ДЛЯ КНОПОК 👇
+    labels = ["A", "B", "C", "D"]
+    options_text_block = ""
     builder = InlineKeyboardBuilder()
-    for option in options:
-        builder.button(text=option['text'], callback_data=f"game_{option['id']}")
+    
+    for i, option in enumerate(options):
+        label = labels[i] if i < len(labels) else f"{i+1}"
+        
+        # Текст варіанту додаємо в повідомлення
+        options_text_block += f"**{label})** {option['text']}\n\n"
+        
+        # На кнопці - тільки буква
+        builder.button(text=f"🔹 {label}", callback_data=f"game_{option['id']}")
 
     builder.button(text="🔙 В меню", callback_data="back_home")
-    builder.adjust(1) # Кнопки одна під одною
+    builder.adjust(2, 2, 1) 
 
-    await message_to_edit.edit_text(scenario_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    full_text = (
+        f"🛡️ **Рівень {current_level}/{max_level}** | ⚡ {new_energy}/5\n\n" 
+        f"{scenario['text']}\n\n"
+        f"👇 **Твій вибір:**\n\n"
+        f"{options_text_block}"
+    )
+
+    await message_to_edit.edit_text(full_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
     
 # Додаємо команду /help
 @dp.message(Command("help"))
