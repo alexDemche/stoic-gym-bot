@@ -40,12 +40,13 @@ dp = Dispatcher()
 def get_main_menu():
     """Головне меню"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
     builder.button(text="📚 Допомога", callback_data="show_help")
-    builder.adjust(1)
+    builder.adjust(2, 2, 2) # по 2 кнопки в ряд
     return builder.as_markup()
 
 def get_quote_keyboard():
@@ -55,6 +56,65 @@ def get_quote_keyboard():
         [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# --- ЛОГІКА ПРОФІЛЮ ТА РАНГІВ ---
+
+def get_stoic_rank(score):
+    """Визначає звання на основі балів"""
+    if score < 50:
+        return "👶 Початківець"
+    elif score < 150:
+        return "📚 Учень"
+    elif score < 300:
+        return "🛡️ Практик"
+    elif score < 500:
+        return "🦉 Філософ"
+    else:
+        return "👑 Стоїчний Мудрець"
+
+@dp.callback_query(F.data == "mode_profile")
+async def show_profile(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # 1. Отримуємо дані з бази
+    score, level = await db.get_stats(user_id)
+    birth_date = await db.get_birthdate(user_id)
+    
+    # 2. Визначаємо ранг
+    rank = get_stoic_rank(score)
+    
+    # 3. Формуємо текст
+    # Вираховуємо прогрес до наступного рангу (для краси)
+    next_rank_score = 500
+    if score < 50: next_rank_score = 50
+    elif score < 150: next_rank_score = 150
+    elif score < 300: next_rank_score = 300
+    elif score < 500: next_rank_score = 500
+    
+    progress_bar = ""
+    if score < 500:
+        needed = next_rank_score - score
+        progress_bar = f"\n📈 До підвищення: ще **{needed}** балів"
+    else:
+        progress_bar = "\n🌟 Ти досяг вершини мудрості!"
+
+    # Перевірка Memento
+    memento_status = "✅ Встановлено" if birth_date else "❌ Не налаштовано"
+
+    text = (
+        f"👤 **Особиста справа Стоїка**\n\n"
+        f"🏷️ Ім'я: **{callback.from_user.first_name}**\n"
+        f"🏅 Звання: **{rank}**\n"
+        f"💎 Бали мудрості: **{score}**\n"
+        f"{progress_bar}\n\n"
+        f"⚔️ Рівень в Gym: **{level}**\n"
+        f"⏳ Memento Mori: **{memento_status}**"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.answer()
 
 # --- ЛОГІКА: СТАРТ І МЕНЮ ---
 
@@ -275,9 +335,15 @@ async def show_leaderboard(callback: types.CallbackQuery):
         for i, (name, score) in enumerate(top_users, start=1):
             # Медальки для перших трьох
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
+            
+            # визначення рангу
+            rank_emoji = get_stoic_rank(score).split()[0] # Беремо тільки смайлик (👶, 🦉 тощо)
+            
             # Якщо ім'я немає в базі (старі юзери), пишемо "Невідомий Стоїк"
             safe_name = name if name else "Невідомий Стоїк"
-            text += f"{medal} {i}. **{safe_name}** — {score} балів\n"
+            
+            # Формат: 🥇 1. Ім'я (🦉) — 350 балів
+            text += f"{medal} {i}. **{safe_name}** ({rank_emoji}) — {score}\n"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
 
@@ -488,7 +554,7 @@ async def main():
     # але поки можна залишити за замовчуванням (UTC). 
     # Якщо Railway в UTC, то 9:00 UTC = 11:00 або 12:00 за Києвом.
     # Давай поставимо 7:00 UTC (це 9:00 або 10:00 за Києвом)
-    scheduler.add_job(send_daily_quote, trigger='cron', hour=7, minute=0)
+    scheduler.add_job(send_daily_quote, trigger='cron', hour=7, minute=30)
     
     scheduler.start()
     
@@ -526,5 +592,5 @@ async def cmd_broadcast(message: types.Message):
 
 if __name__ == "__main__":
     # db = Database() # Цей рядок прибрати!
-    # Тобі потрібно ініціалізувати db = Database() як глобальну змінну, а потім викликати main()
+    # потрібно ініціалізувати db = Database() як глобальну змінну, а потім викликати main()
     asyncio.run(main())
