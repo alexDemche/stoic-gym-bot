@@ -14,6 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from urllib.parse import quote
 
 # Імпортуємо базу цитат з data.py
 from data import STOIC_DB, SCENARIOS, HELP_TEXT
@@ -25,6 +26,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # --- FSM: СТАНИ ---
 class MementoMori(StatesGroup):
     waiting_for_birthdate = State()
+    
+class FeedbackState(StatesGroup):
+    waiting_for_message = State()
 
 # Тимчасова база даних користувачів в пам'яті
 # user_db = {} 
@@ -45,8 +49,10 @@ def get_main_menu():
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
+    
+    builder.button(text="✉️ Написати автору", callback_data="send_feedback")
     builder.button(text="📚 Допомога", callback_data="show_help")
-    builder.adjust(2, 2, 2) # по 2 кнопки в ряд
+    builder.adjust(2, 2, 2, 2) # по 2 кнопки в ряд
     return builder.as_markup()
 
 def get_quote_keyboard():
@@ -111,9 +117,20 @@ async def show_profile(callback: types.CallbackQuery):
         f"⏳ Memento Mori: **{memento_status}**"
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
+    # --- ФОРМУВАННЯ ПОСИЛАННЯ ДЛЯ ШЕРІНГУ ---
+    bot_username = "StoicTrainer_ua_bot" # ⚠️ Заміни на юзернейм свого бота без @
+    share_text = f"🏛 Я досяг звання «{rank}» ({score} балів) у Stoic Trainer!\nЧи зможеш ти мене перевершити?"
     
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    # Кодуємо текст для URL
+    share_url = f"https://t.me/share/url?url={f'https://t.me/{bot_username}'}&text={quote(share_text)}"
+
+    # Додаємо кнопку URL
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📢 Похвалитися друзям", url=share_url)
+    builder.button(text="🔙 В меню", callback_data="back_home")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
     await callback.answer()
 
 # --- ЛОГІКА: СТАРТ І МЕНЮ ---
@@ -589,6 +606,50 @@ async def cmd_broadcast(message: types.Message):
             pass # Ігноруємо помилки (наприклад, юзер заблокував бота)
             
     await message.answer(f"✅ Розсилка завершена! Успішно: {count}")
+
+# --- ЛОГІКА ЗВОРОТНОГО ЗВ'ЯЗКУ ---
+
+@dp.callback_query(F.data == "send_feedback")
+async def start_feedback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "✉️ **Зв'язок з розробником**\n\n"
+        "Напиши своє повідомлення (відгук, ідею або знайдену помилку) і я передам його автору.\n\n"
+        "👇 *Чекаю на твій текст:*",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Скасувати", callback_data="back_home")]]),
+        parse_mode="Markdown"
+    )
+    await state.set_state(FeedbackState.waiting_for_message)
+    await callback.answer()
+
+@dp.message(FeedbackState.waiting_for_message)
+async def process_feedback(message: types.Message, state: FSMContext):
+    user_text = message.text
+    user_id = message.from_user.id
+    user_name = message.from_user.first_name
+    
+    # ID адміна
+    ADMIN_ID = 7597463225 
+    
+    # 1. Відправляємо повідомлення (адміну)
+    try:
+        admin_text = (
+            f"📨 **Новий відгук!**\n"
+            f"👤 Від: {user_name} (`{user_id}`)\n\n"
+            f"💬 Текст:\n{user_text}"
+        )
+        await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
+        
+        # 2. Відповідаємо користувачу
+        await message.answer(
+            "✅ **Повідомлення відправлено!**\nДякую за твій внесок у розвиток проекту.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer("⚠️ Сталася помилка при відправці. Спробуй пізніше.")
+        logging.error(f"Feedback error: {e}")
+        
+    await state.clear()
 
 if __name__ == "__main__":
     # db = Database() # Цей рядок прибрати!
