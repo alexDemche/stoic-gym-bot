@@ -86,7 +86,6 @@ def get_quote_keyboard():
 
 # --- ЛОГІКА ПРОФІЛЮ ТА РАНГІВ ---
 
-
 def get_stoic_rank(score):
     """Визначає звання на основі балів"""
     if score < 50:
@@ -108,15 +107,12 @@ async def show_profile(callback: types.CallbackQuery):
     # 1. Отримуємо дані з бази
     score, level = await db.get_stats(user_id)
     birth_date = await db.get_birthdate(user_id)
-
-    # Отримуємо енергію
     energy = await db.check_energy(user_id)
 
     # 2. Визначаємо ранг
     rank = get_stoic_rank(score)
 
     # 3. Формуємо текст
-    # Вираховуємо прогрес до наступного рангу (для краси)
     next_rank_score = 500
     if score < 50:
         next_rank_score = 50
@@ -127,7 +123,7 @@ async def show_profile(callback: types.CallbackQuery):
     elif score < 500:
         next_rank_score = 500
     else:
-        next_rank_score = score  # Вже макс
+        next_rank_score = score
 
     progress_bar = ""
     if score < 500:
@@ -136,7 +132,6 @@ async def show_profile(callback: types.CallbackQuery):
     else:
         progress_bar = "\n🌟 Ти досяг вершини мудрості!"
 
-    # Перевірка Memento
     memento_status = "✅ Встановлено" if birth_date else "❌ Не налаштовано"
 
     text = (
@@ -150,19 +145,20 @@ async def show_profile(callback: types.CallbackQuery):
         f"⏳ Memento Mori: **{memento_status}**"
     )
 
-    # --- ФОРМУВАННЯ ПОСИЛАННЯ ДЛЯ ШЕРІНГУ ---
-    bot_username = "StoicTrainer_ua_bot"  # ⚠️ Заміни на юзернейм свого бота без @
+    # --- ФОРМУВАННЯ КНОПОК ---
+    bot_username = "StoicTrainer_ua_bot"  # Перевір, чи правильний юзернейм
     share_text = f"🏛 Я досяг звання «{rank}» ({score} балів) у Stoic Trainer!\nЧи зможеш ти мене перевершити?"
-
-    # Кодуємо текст для URL
     share_url = f"https://t.me/share/url?url={f'https://t.me/{bot_username}'}&text={quote(share_text)}"
 
-    # Додаємо кнопку URL
     builder = InlineKeyboardBuilder()
-    builder.button(text="📢 Похвалитися друзям", url=share_url)
+    
+    # 👇 ОСЬ ЦЕ МИ ДОДАЛИ:
+    builder.button(text="📝 Записати думку", callback_data="journal_write") 
+    
     builder.button(text="📜 Мої роздуми", callback_data="journal_view")
+    builder.button(text="📢 Похвалитися друзям", url=share_url)
     builder.button(text="🔙 В меню", callback_data="back_home")
-    builder.adjust(1)
+    builder.adjust(1) # Всі кнопки в один стовпчик
 
     await callback.message.edit_text(
         text, reply_markup=builder.as_markup(), parse_mode="Markdown"
