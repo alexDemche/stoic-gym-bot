@@ -548,7 +548,6 @@ async def send_level(user_id, message_to_edit):
         kb.button(text="🔙 В меню", callback_data="back_home")
         kb.adjust(1)
 
-        # 👇 ОНОВЛЕНИЙ ТЕКСТ ЗІ ЩОДЕННИКОМ 👇
         await message_to_edit.edit_text(
             f"🌙 **Енергія вичерпана**\n\n"
             f"{feedback_text}"
@@ -564,71 +563,47 @@ async def send_level(user_id, message_to_edit):
 
     # 2. ОТРИМАННЯ СТАТИСТИКИ
     score, current_level = await db.get_stats(user_id)
-    max_level = len(SCENARIOS)
+    max_scenarios = len(SCENARIOS)  # Зараз 60, потім буде 100
 
-    # 3. ПЕРЕВІРКА НА ПЕРЕМОГУ
-    if current_level > max_level:
-        rank = get_stoic_rank(score)
+    # 3. ЛОГІКА ВИБОРУ СЦЕНАРІЮ (Endless Mode)
+    scenario_data = None
+    header_text = ""
 
-        final_msg = ""
-        if score > 500:
-            final_msg = "Ти досяг рівня **Стоїчного Мудреця**. Твій внутрішній акрополь неприступний для зовнішніх бур."
-        elif score > 300:
-            final_msg = "Ти справжній **Філософ**. Ти знаєш шлях, тепер головне — не сходити з нього."
-        else:
-            final_msg = "Ти пройшов шлях, але емоції ще сильні. Справжній стоїк вчиться все життя."
-
-        await message_to_edit.edit_text(
-            f"🏆 **ШЛЯХ ЗАВЕРШЕНО!**\n\n"
-            f"Ти пройшов усі {max_level} життєвих ситуацій.\n"
-            f"💎 Фінальний рахунок: **{score}**\n"
-            f"🏅 Твоє звання: **{rank}**\n\n"
-            f"📜 **Вердикт Оракула:**\n_{final_msg}_\n\n"
-            f"Це не кінець. Це лише початок застосування знань у реальному житті.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🔄 Почати заново", callback_data="reset_gym_confirm"
-                        )
-                    ],
-                    [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")],
-                ]
-            ),
-            parse_mode="Markdown",
-        )
-        return
+    if current_level <= max_scenarios:
+        # --- ЗВИЧАЙНИЙ РЕЖИМ (1-100) ---
+        scenario_data = SCENARIOS.get(current_level)
+        header_text = f"🛡️ **Рівень {current_level}/{max_scenarios}**"
+    else:
+        # --- НЕСКІНЧЕННИЙ РЕЖИМ (101+) ---
+        # Вибираємо випадковий ID від 1 до max_scenarios
+        random_id = random.randint(1, max_scenarios)
+        scenario_data = SCENARIOS.get(random_id)
+        header_text = f"♾️ **Шлях Мудреця | Рівень {current_level}**"
 
     # 4. СПИСАННЯ ЕНЕРГІЇ
     await db.decrease_energy(user_id)
     new_energy = energy - 1
 
-    scenario = SCENARIOS.get(current_level)
-
     # Копіюємо і перемішуємо варіанти
-    options = scenario["options"].copy()
+    options = scenario_data["options"].copy()
     random.shuffle(options)
 
-    # 👇 ЛОГІКА A/B/C/D ДЛЯ КНОПОК 👇
+    # ЛОГІКА A/B/C/D
     labels = ["A", "B", "C", "D"]
     options_text_block = ""
     builder = InlineKeyboardBuilder()
 
     for i, option in enumerate(options):
         label = labels[i] if i < len(labels) else f"{i + 1}"
-
-        # Текст варіанту додаємо в повідомлення
         options_text_block += f"**{label})** {option['text']}\n\n"
-
-        # На кнопці - тільки буква
         builder.button(text=f"🔹 {label}", callback_data=f"game_{option['id']}")
 
     builder.button(text="🔙 В меню", callback_data="back_home")
     builder.adjust(2, 2, 1)
 
     full_text = (
-        f"🛡️ **Рівень {current_level}/{max_level}** | ⚡ {new_energy}/5\n\n"
-        f"{scenario['text']}\n\n"
+        f"{header_text} | ⚡ {new_energy}/5\n\n"
+        f"{scenario_data['text']}\n\n"
         f"👇 **Твій вибір:**\n\n"
         f"{options_text_block}"
     )
