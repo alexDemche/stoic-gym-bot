@@ -57,11 +57,13 @@ def get_main_menu():
     """Головне меню"""
     builder = InlineKeyboardBuilder()
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
+    
+    builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
+    
 
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
 
-    builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
 
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
     builder.button(text="✉️ Написати автору", callback_data="send_feedback")
@@ -69,7 +71,7 @@ def get_main_menu():
     builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="📚 Допомога", callback_data="show_help")
 
-    builder.adjust(1, 2, 1, 2, 2)
+    builder.adjust(1, 1, 2, 2, 2)
     return builder.as_markup()
 
 
