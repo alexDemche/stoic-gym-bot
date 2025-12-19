@@ -56,20 +56,20 @@ dp = Dispatcher()
 def get_main_menu():
     """Головне меню"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
-    builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
-
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
+
+    builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
+
+    builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
 
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
     builder.button(text="✉️ Написати автору", callback_data="send_feedback")
 
-    builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
-
+    builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="📚 Допомога", callback_data="show_help")
 
-    builder.adjust(2, 2, 2, 1, 1)
+    builder.adjust(1, 2, 1, 2, 2)
     return builder.as_markup()
 
 
@@ -802,7 +802,7 @@ async def start_ai_mentor(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "🤖 **Зал Роздумів**\n\n"
         "Я — цифрова тінь Марка Аврелія. Я тут, щоб вислухати твої тривоги.\n\n"
-        "Напиши мені, що тебе турбує, або запитай поради. \n"
+        "👇 Напиши мені, що тебе турбує, або запитай поради. \n"
         "_(Наприклад: 'Як перестати злитися на колег?' або 'Я втратив мотивацію')_",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
