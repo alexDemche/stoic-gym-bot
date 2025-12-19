@@ -14,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
+from ai_service import get_stoic_advice
 # Імпортуємо базу цитат з data.py
 from data import HELP_TEXT, SCENARIOS, STOIC_DB
 from db import Database
@@ -36,6 +37,10 @@ class JournalState(StatesGroup):
     waiting_for_entry = State()
 
 
+class MentorState(StatesGroup):
+    chatting = State()  # Стан активного діалогу з ШІ
+
+
 # Тимчасова база даних користувачів в пам'яті
 # user_db = {}
 # db = Database('stoic.db')
@@ -53,13 +58,18 @@ def get_main_menu():
     builder = InlineKeyboardBuilder()
     builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
+
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
-    builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
 
+    builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
     builder.button(text="✉️ Написати автору", callback_data="send_feedback")
+
+    builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
+
     builder.button(text="📚 Допомога", callback_data="show_help")
-    builder.adjust(2, 2, 2, 2)  # по 2 кнопки в ряд
+
+    builder.adjust(2, 2, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -180,7 +190,8 @@ async def cmd_start(message: types.Message):
 
 
 @dp.callback_query(F.data == "back_home")
-async def back_to_main_menu(callback: types.CallbackQuery):
+async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()  # <-- ВАЖЛИВО: Виходимо з будь-якого режиму (ШІ, гра, фідбек)
     """Обробник для кнопки "Назад в меню"."""
     await callback.message.edit_text(
         "👋 **Вітаю в Stoic Trainer!**\n\n" "Обери режим для тренування духу:",
@@ -783,6 +794,55 @@ async def send_daily_quote():
             )
 
     logging.info(f"✅ Розсилка завершена. Отримали: {count} користувачів.")
+
+
+# --- ЛОГІКА ШІ МЕНТОРА ---
+@dp.callback_query(F.data == "mode_ai")
+async def start_ai_mentor(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🤖 **Зал Роздумів**\n\n"
+        "Я — цифрова тінь Марка Аврелія. Я тут, щоб вислухати твої тривоги.\n\n"
+        "Напиши мені, що тебе турбує, або запитай поради. \n"
+        "_(Наприклад: 'Як перестати злитися на колег?' або 'Я втратив мотивацію')_",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔙 Вийти з діалогу", callback_data="back_home"
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+    await state.set_state(MentorState.chatting)
+    await callback.answer()
+
+
+@dp.message(MentorState.chatting)
+async def process_ai_chat(message: types.Message, state: FSMContext):
+    user_text = message.text
+
+    # Показуємо, що бот "друкує" (це важливо для UX, бо ШІ думає 2-3 сек)
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+
+    # Отримуємо відповідь від ШІ
+    ai_response = await get_stoic_advice(user_text)
+
+    await message.answer(
+        f"🏛 **Марк Аврелій:**\n\n{ai_response}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔙 Завершити розмову", callback_data="back_home"
+                    )
+                ]
+            ]
+        ),
+    )
+    # Ми НЕ скидаємо стан, щоб юзер міг писати далі (діалог триває)
 
 
 async def main():
