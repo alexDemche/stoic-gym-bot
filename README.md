@@ -39,7 +39,17 @@ DATABASE_URL=postgresql://user:password@localhost:5432/stoic_db
 OPENAI_API_KEY=sk-proj-ваш_ключ_openai
 
 5. **Запуск бота**
-python main.py
+Активуй віртуальне середовище (venv):
+Windows: venv\Scripts\activate
+Mac/Linux: source venv/bin/activate
+
+Встанови нові бібліотеки:
+pip install -r requirements.txt
+
+npm install -g nodemon
+
+Запусти бота:
+nodemon --exec python3 main.py
 
 📂 Структура проекту
 stoic-bot/

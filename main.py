@@ -14,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
+from academy_service import format_article
 from ai_service import get_stoic_advice
 # Імпортуємо базу цитат з data.py
 from data import HELP_TEXT, SCENARIOS, STOIC_DB
@@ -57,13 +58,13 @@ def get_main_menu():
     """Головне меню"""
     builder = InlineKeyboardBuilder()
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
-    
+
+    builder.button(text="📖 Академія", callback_data="mode_academy")
+
     builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
-    
 
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
-
 
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
     builder.button(text="✉️ Написати автору", callback_data="send_feedback")
@@ -71,7 +72,7 @@ def get_main_menu():
     builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="📚 Допомога", callback_data="show_help")
 
-    builder.adjust(1, 1, 2, 2, 2)
+    builder.adjust(1, 1, 1, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -85,6 +86,7 @@ def get_quote_keyboard():
 
 
 # --- ЛОГІКА ПРОФІЛЮ ТА РАНГІВ ---
+
 
 def get_stoic_rank(score):
     """Визначає звання на основі балів"""
@@ -151,14 +153,13 @@ async def show_profile(callback: types.CallbackQuery):
     share_url = f"https://t.me/share/url?url={f'https://t.me/{bot_username}'}&text={quote(share_text)}"
 
     builder = InlineKeyboardBuilder()
-    
-    # 👇 ОСЬ ЦЕ МИ ДОДАЛИ:
-    builder.button(text="📝 Записати думку", callback_data="journal_write") 
-    
+
+    builder.button(text="📝 Записати думку", callback_data="journal_write")
+
     builder.button(text="📜 Мої роздуми", callback_data="journal_view")
     builder.button(text="📢 Похвалитися друзям", url=share_url)
     builder.button(text="🔙 В меню", callback_data="back_home")
-    builder.adjust(1) # Всі кнопки в один стовпчик
+    builder.adjust(1)  # Всі кнопки в один стовпчик
 
     await callback.message.edit_text(
         text, reply_markup=builder.as_markup(), parse_mode="Markdown"
@@ -209,6 +210,83 @@ async def cmd_stats(message: types.Message):
     await message.answer(
         f"📊 **Статистика бота:**\n\n👤 Користувачів: **{count}**", parse_mode="Markdown"
     )
+
+
+# --- ЛОГІКА: Академія Стоїцизму ---
+@dp.callback_query(F.data == "mode_academy")
+async def show_academy_article(callback: types.CallbackQuery):
+    # Отримуємо поточну дату
+    now = datetime.now()
+    day = now.day
+    month = now.month
+
+    # Отримуємо статтю з БД
+    article = await db.get_article_by_date(day, month)
+    text = format_article(article)
+
+    kb = InlineKeyboardBuilder()
+    # ВАЖЛИВО: додаємо _nav_ у callback_data, щоб хендлер navigate_academy спрацював
+    kb.button(text="⬅️ Минулий урок", callback_data=f"academy_nav_prev_{day}_{month}")
+    kb.button(text="➡️ Наступний урок", callback_data=f"academy_nav_next_{day}_{month}")
+    kb.button(text="🔙 В меню", callback_data="back_home")
+    kb.adjust(2, 1)
+
+    await callback.message.edit_text(
+        text, reply_markup=kb.as_markup(), parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("academy_nav_"))
+async def navigate_academy(callback: types.CallbackQuery):
+    # Отримуємо напрямок та поточну дату з callback_data (формат: academy_nav_direction_day_month)
+    parts = callback.data.split("_")
+    direction = parts[2]  # "prev" або "next"
+    current_day = int(parts[3])
+    current_month = int(parts[4])
+
+    # Створюємо об'єкт дати для зручних маніпуляцій (через timedelta)
+    from datetime import date, timedelta
+
+    current_date = date(
+        2025, current_month, current_day
+    )  # Рік не критичний для 366 роздумів
+
+    if direction == "next":
+        new_date = current_date + timedelta(days=1)
+    else:
+        new_date = current_date - timedelta(days=1)
+
+    new_day = new_date.day
+    new_month = new_date.month
+
+    # Отримуємо нову статтю
+    article = await db.get_article_by_date(new_day, new_month)
+
+    if not article:
+        await callback.answer(
+            "Цієї сторінки Академії ще немає в бібліотеці.", show_alert=True
+        )
+        return
+
+    text = format_article(article)
+
+    # Оновлюємо клавіатуру з новими датами
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text="⬅️ Минулий урок", callback_data=f"academy_nav_prev_{new_day}_{new_month}"
+    )
+    kb.button(
+        text="➡️ Наступний урок",
+        callback_data=f"academy_nav_next_{new_day}_{new_month}",
+    )
+    kb.button(text="🔙 В меню", callback_data="back_home")
+    kb.adjust(2, 1)
+
+    await callback.message.edit_text(
+        text, reply_markup=kb.as_markup(), parse_mode="Markdown"
+    )
+    await callback.answer()
 
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
@@ -847,6 +925,7 @@ async def main():
     # 1. ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ
     await db.connect()
     await db.create_tables()
+    await db.create_academy_table()
 
     # 2. ПЛАНУВАЛЬНИК (SCHEDULER)
     scheduler = AsyncIOScheduler()

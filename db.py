@@ -248,3 +248,61 @@ class Database:
                 "mistakes": mistakes,
                 "wisdoms": wisdoms,
             }
+
+    # Академія Стоїцизму
+    async def create_academy_table(self):
+        """Створює таблицю для розгорнутих статей Академії"""
+        async with self.pool.acquire() as conn:
+            # 1. Створюємо саму таблицю
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS academy_articles (
+                    id SERIAL PRIMARY KEY,
+                    day INT NOT NULL,
+                    month INT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    reflection TEXT,
+                    -- Додаємо унікальність безпосередньо при створенні
+                    UNIQUE (day, month)
+                )
+            """
+            )
+
+            # 2. Додатковий запит для існуючих таблиць (про всяк випадок)
+            # Це гарантує, що якщо таблиця вже була створена раніше без UNIQUE, ми його додамо.
+            try:
+                await conn.execute(
+                    """
+                    ALTER TABLE academy_articles
+                    ADD CONSTRAINT unique_day_month UNIQUE (day, month);
+                """
+                )
+            except Exception:
+                # Якщо констрейнт вже існує, база видасть помилку, ми її ігноруємо
+                pass
+
+    async def get_article_by_date(self, day: int, month: int):
+        """Отримує статтю на конкретну дату"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM academy_articles WHERE day = $1 AND month = $2",
+                day,
+                month,
+            )
+
+    # Метод для додавання статті (знадобиться для наповнення)
+    async def add_academy_article(self, day, month, title, content, reflection):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO academy_articles (day, month, title, content, reflection)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT DO NOTHING
+            """,
+                day,
+                month,
+                title,
+                content,
+                reflection,
+            )

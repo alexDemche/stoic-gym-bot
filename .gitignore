@@ -1,2 +1,13 @@
-.env
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
+.env
+
+# Database/Storage (якщо використовуєш локальні БД для тестів)
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
