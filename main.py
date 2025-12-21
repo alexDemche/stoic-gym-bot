@@ -59,8 +59,7 @@ def get_main_menu():
     builder = InlineKeyboardBuilder()
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
 
-    builder.button(text="📖 Академія", callback_data="mode_academy")
-
+    builder.button(text="📖 Академія (Теорія)", callback_data="mode_academy")
     builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
 
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
@@ -72,7 +71,7 @@ def get_main_menu():
     builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="📚 Допомога", callback_data="show_help")
 
-    builder.adjust(1, 1, 1, 2, 2, 2)
+    builder.adjust(1, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -89,77 +88,90 @@ def get_quote_keyboard():
 
 
 def get_stoic_rank(score):
-    """Визначає звання на основі балів"""
     if score < 50:
-        return "👶 Початківець"
+        return "🌱 Неофіт"
     elif score < 150:
-        return "📚 Учень"
-    elif score < 300:
-        return "🛡️ Практик"
+        return "🎒 Учень"
     elif score < 500:
-        return "🦉 Філософ"
+        return "🏃 Практик"  # Раніше це був майже кінець
+    elif score < 1000:
+        return "🧠 Філософ"  # Новий рівень
+    elif score < 2500:
+        return "🛡️ Майстер Стійкості"
+    elif score < 5000:
+        return "🏛️ Мудрець"
     else:
-        return "👑 Стоїчний Мудрець"
+        return "👑 Стоїчний Ідеал"  # Елітний статус
 
 
 @dp.callback_query(F.data == "mode_profile")
 async def show_profile(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
-    # 1. Отримуємо дані з бази
+    # 1. Отримуємо дані гри (Gym)
     score, level = await db.get_stats(user_id)
     birth_date = await db.get_birthdate(user_id)
     energy = await db.check_energy(user_id)
 
-    # 2. Визначаємо ранг
-    rank = get_stoic_rank(score)
+    # 2. Отримуємо дані навчання (Академія)
+    # academy_count - кількість статей, academy_rank - назва класу
+    academy_count, academy_rank = await db.get_academy_progress(user_id)
 
-    # 3. Формуємо текст
-    next_rank_score = 500
-    if score < 50:
-        next_rank_score = 50
-    elif score < 150:
-        next_rank_score = 150
-    elif score < 300:
-        next_rank_score = 300
-    elif score < 500:
-        next_rank_score = 500
-    else:
-        next_rank_score = score
+    # 3. Визначаємо ігрове звання (Gym)
+    game_rank = get_stoic_rank(score)
 
-    progress_bar = ""
-    if score < 500:
+    # 4. Прогрес-бар до наступного ігрового звання (ОНОВЛЕНО)
+    # Створюємо словник порогів, щоб не писати купу if/else
+    thresholds = [50, 150, 500, 1000, 2500, 5000]
+    next_rank_score = 0
+
+    # Шукаємо найближчу мету
+    for t in thresholds:
+        if score < t:
+            next_rank_score = t
+            break
+
+    progress_msg = ""
+    if next_rank_score > 0:
         needed = next_rank_score - score
-        progress_bar = f"\n📈 До підвищення: ще **{needed}** балів"
+        progress_msg = f" (ще {needed} до підвищення)"
     else:
-        progress_bar = "\n🌟 Ти досяг вершини мудрості!"
+        # Якщо більше 5000
+        progress_msg = " (MAX LEVEL 👑)"
 
-    memento_status = "✅ Встановлено" if birth_date else "❌ Не налаштовано"
+    memento_status = "✅ Активно" if birth_date else "❌ Не налаштовано"
 
+    # 5. Формуємо красивий текст
     text = (
-        f"👤 **Особиста справа Стоїка**\n\n"
-        f"🏷️ Ім'я: **{callback.from_user.first_name}**\n"
-        f"🏅 Звання: **{rank}**\n"
-        f"💎 Бали мудрості: **{score}**\n"
-        f"{progress_bar}\n\n"
-        f"⚡ Енергія: **{energy}/5**\n"
-        f"\n⚔️ Пройдено рівнів: **{level - 1}**\n"
+        f"👤 **Особиста справа Стоїка**\n"
+        f"🏷️ Ім'я: **{callback.from_user.first_name}**\n\n"
+        f"⚔️ **STOIC GYM (Практика)**\n"
+        f"🏅 Звання: **{game_rank}**\n"
+        f"💎 Бали мудрості: **{score}**{progress_msg}\n"
+        f"🏔️ Пройдено рівнів: **{level - 1}**\n"
+        f"⚡ Енергія: **{energy}/5**\n\n"
+        f"🎓 **АКАДЕМІЯ (Теорія)**\n"
+        f"🏫 Клас: **{academy_rank}**\n"
+        f"📚 Пройдено уроків: **{academy_count}**\n\n"
         f"⏳ Memento Mori: **{memento_status}**"
     )
 
     # --- ФОРМУВАННЯ КНОПОК ---
-    bot_username = "StoicTrainer_ua_bot"  # Перевір, чи правильний юзернейм
-    share_text = f"🏛 Я досяг звання «{rank}» ({score} балів) у Stoic Trainer!\nЧи зможеш ти мене перевершити?"
+    bot_username = "StoicTrainer_ua_bot"
+    share_text = (
+        f"🏛 Мій прогрес у Stoic Trainer:\n"
+        f"⚔️ Практика: {game_rank} ({score} балів)\n"
+        f"🎓 Теорія: {academy_rank}\n"
+        f"Спробуй і ти!"
+    )
     share_url = f"https://t.me/share/url?url={f'https://t.me/{bot_username}'}&text={quote(share_text)}"
 
     builder = InlineKeyboardBuilder()
-
     builder.button(text="📝 Записати думку", callback_data="journal_write")
-
     builder.button(text="📜 Мої роздуми", callback_data="journal_view")
-    builder.button(text="📢 Похвалитися друзям", url=share_url)
+    builder.button(text="📢 Похвалитися", url=share_url)
     builder.button(text="🔙 В меню", callback_data="back_home")
-    builder.adjust(1)  # Всі кнопки в один стовпчик
+    builder.adjust(1)
 
     await callback.message.edit_text(
         text, reply_markup=builder.as_markup(), parse_mode="Markdown"
@@ -213,23 +225,37 @@ async def cmd_stats(message: types.Message):
 
 
 # --- ЛОГІКА: Академія Стоїцизму ---
+# Оновлений хендлер показу статті
 @dp.callback_query(F.data == "mode_academy")
 async def show_academy_article(callback: types.CallbackQuery):
-    # Отримуємо поточну дату
     now = datetime.now()
     day = now.day
     month = now.month
 
-    # Отримуємо статтю з БД
     article = await db.get_article_by_date(day, month)
+
+    # Якщо статті немає (наприклад, база пуста)
+    if not article:
+        await callback.message.edit_text(
+            "Поки що тут пусто.", reply_markup=get_main_menu()
+        )
+        return
+
     text = format_article(article)
 
     kb = InlineKeyboardBuilder()
-    # ВАЖЛИВО: додаємо _nav_ у callback_data, щоб хендлер navigate_academy спрацював
+    # Навігація
     kb.button(text="⬅️ Минулий урок", callback_data=f"academy_nav_prev_{day}_{month}")
     kb.button(text="➡️ Наступний урок", callback_data=f"academy_nav_next_{day}_{month}")
+    # Кнопка Прочитано (передаємо ID статті)
+    kb.button(
+        text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}"
+    )
+    # Меню
     kb.button(text="🔙 В меню", callback_data="back_home")
-    kb.adjust(2, 1)
+
+    # Схема розташування: 2 кнопки навігації, 1 кнопка прочитано, 1 кнопка меню
+    kb.adjust(2, 1, 1)
 
     await callback.message.edit_text(
         text, reply_markup=kb.as_markup(), parse_mode="Markdown"
@@ -237,20 +263,18 @@ async def show_academy_article(callback: types.CallbackQuery):
     await callback.answer()
 
 
+# Оновлений хендлер навігації
 @dp.callback_query(F.data.startswith("academy_nav_"))
 async def navigate_academy(callback: types.CallbackQuery):
-    # Отримуємо напрямок та поточну дату з callback_data (формат: academy_nav_direction_day_month)
     parts = callback.data.split("_")
-    direction = parts[2]  # "prev" або "next"
+    direction = parts[2]
     current_day = int(parts[3])
     current_month = int(parts[4])
 
-    # Створюємо об'єкт дати для зручних маніпуляцій (через timedelta)
     from datetime import date, timedelta
 
-    current_date = date(
-        2025, current_month, current_day
-    )  # Рік не критичний для 366 роздумів
+    # Використовуємо 2024 рік (високосний), щоб уникнути помилок з 29 лютого
+    current_date = date(2024, current_month, current_day)
 
     if direction == "next":
         new_date = current_date + timedelta(days=1)
@@ -260,18 +284,14 @@ async def navigate_academy(callback: types.CallbackQuery):
     new_day = new_date.day
     new_month = new_date.month
 
-    # Отримуємо нову статтю
     article = await db.get_article_by_date(new_day, new_month)
 
     if not article:
-        await callback.answer(
-            "Цієї сторінки Академії ще немає в бібліотеці.", show_alert=True
-        )
+        await callback.answer("Цієї сторінки Академії ще немає.", show_alert=True)
         return
 
     text = format_article(article)
 
-    # Оновлюємо клавіатуру з новими датами
     kb = InlineKeyboardBuilder()
     kb.button(
         text="⬅️ Минулий урок", callback_data=f"academy_nav_prev_{new_day}_{new_month}"
@@ -280,13 +300,44 @@ async def navigate_academy(callback: types.CallbackQuery):
         text="➡️ Наступний урок",
         callback_data=f"academy_nav_next_{new_day}_{new_month}",
     )
+    # Тут теж додаємо ID нової статті
+    kb.button(
+        text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}"
+    )
     kb.button(text="🔙 В меню", callback_data="back_home")
-    kb.adjust(2, 1)
+    kb.adjust(2, 1, 1)
 
     await callback.message.edit_text(
         text, reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("academy_read_"))
+async def handle_read_article(callback: types.CallbackQuery):
+    # Витягуємо ID статті з callback_data
+    article_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+
+    # Спроба зарахувати
+    is_new = await db.mark_article_as_read(user_id, article_id)
+
+    # Отримуємо актуальну статистику
+    count, rank = await db.get_academy_progress(user_id)
+
+    if is_new:
+        # Перевіряємо, чи змінився клас чи читає вперше
+        await callback.answer(
+            f"📚 Урок зараховано!\n"
+            f"Твій прогрес: {count} статей.\n"
+            f"Статус: {rank}",
+            show_alert=True,
+        )
+    else:
+        # Якщо вже читав
+        await callback.answer(
+            f"Ти вже закріпив цей урок. 🤝\nВсього уроків: {count}", show_alert=False
+        )
 
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
@@ -926,6 +977,7 @@ async def main():
     await db.connect()
     await db.create_tables()
     await db.create_academy_table()
+    await db.create_progress_table()
 
     # 2. ПЛАНУВАЛЬНИК (SCHEDULER)
     scheduler = AsyncIOScheduler()

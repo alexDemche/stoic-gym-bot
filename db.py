@@ -306,3 +306,70 @@ class Database:
                 content,
                 reflection,
             )
+
+    # --- НОВІ МЕТОДИ ДЛЯ АКАДЕМІЇ ---
+    async def create_progress_table(self):
+        """Створює таблицю для збереження прогресу навчання"""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_academy_progress (
+                    user_id BIGINT,
+                    article_id INT,
+                    read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, article_id)
+                )
+            """
+            )
+
+    async def mark_article_as_read(self, user_id, article_id):
+        """Позначає статтю як прочитану. Повертає True, якщо це вперше."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                INSERT INTO user_academy_progress (user_id, article_id)
+                VALUES ($1, $2) ON CONFLICT DO NOTHING
+            """,
+                user_id,
+                article_id,
+            )
+            # "INSERT 0 1" означає, що рядок додався успішно (раніше не читав)
+            return result == "INSERT 0 1"
+
+    async def get_academy_progress(self, user_id):
+        """Повертає кількість прочитаних статей та шкільний клас"""
+        async with self.pool.acquire() as conn:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_academy_progress WHERE user_id = $1", user_id
+            )
+
+            # Система 11 класів
+            # Перші класи — швидкий прогрес, далі — складніше
+            if count < 1:
+                rank = "👶 Дошкільня (Ще не почав)"
+            elif count < 5:
+                rank = "1️⃣ 1-й Клас (Новачок)"
+            elif count < 10:
+                rank = "2️⃣ 2-й Клас (Допитливий)"
+            elif count < 20:
+                rank = "3️⃣ 3-й Клас (Слухач)"
+            elif count < 35:
+                rank = "4️⃣ 4-й Клас (Молодший учень)"  # Випуск з початкової школи
+            elif count < 50:
+                rank = "5️⃣ 5-й Клас (Дослідник)"
+            elif count < 70:
+                rank = "6️⃣ 6-й Клас (Практик)"
+            elif count < 100:
+                rank = "7️⃣ 7-й Клас (Логік)"
+            elif count < 150:
+                rank = "8️⃣ 8-й Клас (Аналітик)"
+            elif count < 200:
+                rank = "9️⃣ 9-й Клас (Гімназист)"  # Неповна середня
+            elif count < 300:
+                rank = "🔟 10-й Клас (Філософ)"
+            elif count < 365:
+                rank = "1️⃣1️⃣ 11-й Клас (Випускник)"
+            else:
+                rank = "🎓 Магістр Стоїцизму (Університет)"  # Якщо пройде весь рік
+
+            return count, rank
