@@ -477,7 +477,6 @@ async def send_random_quote(callback: types.CallbackQuery):
 
 # --- ЛОГІКА: MEMENTO MORI (ТАЙМЕР ЖИТТЯ) ---
 
-
 def generate_memento_text(birth_date: datetime):
     """Генерує текст таймера життя на основі дати."""
     AVG_LIFESPAN_YEARS = 80
@@ -498,57 +497,62 @@ def generate_memento_text(birth_date: datetime):
 
     return (
         f"📅 **Точка відліку:** {birth_date.year} рік\n\n"
-        f"⏳ **Твій життєвий шлях (80 років):**\n"
+        f"⏳ **Середній життєвий шлях (статистика):**\n"
         f"`{progress_bar}` {percentage:.1f}%\n\n"
         f"🔹 Прожито тижнів: **{weeks_lived}**\n"
-        f"🔸 Залишилось тижнів: **{int(TOTAL_WEEKS - weeks_lived)}**\n\n"
-        f"💡 *«Життя довге, якщо знаєш, як його прожити.» — Сенека*"
+        f"🔸 Умовний запас: **~{int(TOTAL_WEEKS - weeks_lived)}** тижнів\n\n"
+        f"✨ *«Не те щоб ми маємо мало часу, а те, що ми багато його втрачаємо.» — Сенека*\n\n"
+        f"☝️ _Пам'ятай: цей графік — лише модель. Справжня цінність життя вимірюється не тижнями, а глибиною твоїх вчинків._"
     )
 
 
 @dp.callback_query(F.data == "reset_memento")
 async def reset_memento_date(callback: types.CallbackQuery, state: FSMContext):
+    # Додаємо кнопку скасування, щоб не застрягти
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔙 Скасувати", callback_data="back_home")
+    
     await callback.message.edit_text(
-        "🔄 **Зміна дати**\n\n" "Введи нову дату народження (або рік):",
+        "🔄 **Зміна дати**\n\n" 
+        "Введи нову дату народження (наприклад: `24.08.1991`) або просто рік:",
+        reply_markup=kb.as_markup(),
         parse_mode="Markdown",
     )
     await state.set_state(MementoMori.waiting_for_birthdate)
     await callback.answer()
 
 
-#  Моменто морі логіка
 @dp.callback_query(F.data == "mode_memento")
 async def start_memento(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
 
-    # Отримуємо дату з бази (asyncpg повертає об'єкт datetime.date або None)
+    # Отримуємо дату з бази
     saved_date = await db.get_birthdate(user_id)
 
     if saved_date:
-        # ВАЖЛИВО: saved_date — це вже об'єкт date.
+        # --- ВАРІАНТ 1: ДАТА Є ---
         birth_date = datetime(saved_date.year, saved_date.month, saved_date.day)
-
         text = generate_memento_text(birth_date)
 
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔄 Змінити дату", callback_data="reset_memento"
-                    )
-                ],
-                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")],
-            ]
-        )
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔄 Змінити дату", callback_data="reset_memento")
+        kb.button(text="🔙 В меню", callback_data="back_home")
+        kb.adjust(1) # Кнопки одна під одною
 
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
     else:
-        # Якщо дати немає, просимо ввести
+        # --- ВАРІАНТ 2: ДАТИ НЕМАЄ (ПЕРШИЙ ВХІД) ---
+        kb = InlineKeyboardBuilder()
+        # ВАЖЛИВО: Додаємо кнопку виходу, якщо юзер передумав
+        kb.button(text="🔙 Назад в меню", callback_data="back_home")
+        
         await callback.message.edit_text(
             "⏳ **Memento Mori**\n\n"
-            "Щоб побачити свій таймер, введи дату народження.\n"
-            "Можна повну: `24.08.1995`\n"
-            "Або просто рік: `1995`",
+            "Щоб візуалізувати твій час, мені потрібно знати дату народження.\n\n"
+            "👇 Напиши її у чат:\n"
+            "• Повну: `24.08.1995`\n"
+            "• Або рік: `1995`",
+            reply_markup=kb.as_markup(),
             parse_mode="Markdown",
         )
         await state.set_state(MementoMori.waiting_for_birthdate)
@@ -560,6 +564,10 @@ async def start_memento(callback: types.CallbackQuery, state: FSMContext):
 async def process_birthdate(message: types.Message, state: FSMContext):
     date_text = message.text.strip()
     birth_date = None
+    
+    # Кнопка "Скасувати" на випадок помилки
+    kb_error = InlineKeyboardBuilder()
+    kb_error.button(text="🔙 Скасувати", callback_data="back_home")
 
     # Спроба 1: Повна дата
     try:
@@ -570,30 +578,42 @@ async def process_birthdate(message: types.Message, state: FSMContext):
             birth_date = datetime.strptime(date_text, "%Y")
         except ValueError:
             await message.answer(
-                "⚠️ Не розумію формат.\nНапиши просто рік (наприклад: `1998`) або дату (`24.08.1998`)."
+                "⚠️ **Невірний формат.**\n"
+                "Спробуй ще раз: `24.08.1998` або просто `1998`.",
+                reply_markup=kb_error.as_markup(),
+                parse_mode="Markdown"
             )
             return
 
+    # --- ДОДАТКОВІ ПЕРЕВІРКИ ---
+    # 1. Перевірка на майбутнє
+    if birth_date > datetime.now():
+        await message.answer(
+            "🔮 Ти з майбутнього? Введи дату народження з минулого.",
+            reply_markup=kb_error.as_markup()
+        )
+        return
+    
+    # 2. Перевірка на реалістичність (наприклад, > 110 років)
+    if (datetime.now().year - birth_date.year) > 110:
+        await message.answer(
+            "🐢 Ого, ти бачив динозаврів? Давай введемо реальну дату.",
+            reply_markup=kb_error.as_markup()
+        )
+        return
+
     # --- ЗБЕРЕЖЕННЯ В БАЗУ ---
-    # Зберігаємо у форматі РРРР-ММ-ДД (стандарт для баз даних)
-    # Передаємо об'єкт date(), драйвер сам перетворить його у формат SQL
     await db.set_birthdate(message.from_user.id, birth_date.date())
 
-    # Генеруємо текст через нашу нову функцію
+    # Генеруємо результат
     result_text = generate_memento_text(birth_date)
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 Змінити дату", callback_data="reset_memento"
-                )
-            ],
-            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")],
-        ]
-    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Змінити дату", callback_data="reset_memento")
+    kb.button(text="🔙 В меню", callback_data="back_home")
+    kb.adjust(1)
 
-    await message.answer(result_text, reply_markup=kb, parse_mode="Markdown")
+    await message.answer(result_text, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await state.clear()
 
 
