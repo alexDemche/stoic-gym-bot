@@ -60,18 +60,20 @@ def get_main_menu():
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
 
     builder.button(text="📖 Академія (Теорія)", callback_data="mode_academy")
+    
     builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
+    builder.button(text="🧘‍♂️ Breath Flow (Дихання)", url="https://t.me/breath_flow_ua_bot")
 
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
 
+    builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
+    
+    builder.button(text="📚 Допомога", callback_data="show_help")
     builder.button(text="✉️ Написати автору", callback_data="send_feedback")
 
-    builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
-    builder.button(text="📚 Допомога", callback_data="show_help")
-
-    builder.adjust(1, 2, 2, 2, 2)
+    builder.adjust(1, 1, 2, 2, 2, 2)
     return builder.as_markup()
 
 
