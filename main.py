@@ -252,16 +252,17 @@ async def render_article(callback: types.CallbackQuery, article, user_id):
         next_callback = f"academy_nav_next_{article['day']}_{article['month']}"
         next_text = "➡️ Наступний"
 
-    kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
-    kb.button(text=next_text, callback_data=next_callback)
-    
     if is_read:
         kb.button(text="🌟 Вже вивчено", callback_data="academy_already_done")
     else:
         kb.button(text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}")
         
+    kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
+    kb.button(text=next_text, callback_data=next_callback)
+    
     kb.button(text="🔙 В меню", callback_data="back_home")
-    kb.adjust(2, 1, 1)
+    kb.button(text="📚 Бібліотека", callback_data="library_page_0")
+    kb.adjust(1, 2, 2)
     
     try:
         await callback.message.edit_text(
@@ -356,6 +357,95 @@ async def handle_read_article(callback: types.CallbackQuery):
             )
     else:
         await callback.answer("Архів: статті немає.")
+        
+# --- ЛОГІКА: БІБЛІОТЕКА (АРХІВ) ---
+
+# --- ОНОВЛЕНИЙ ХЕНДЛЕР БІБЛІОТЕКИ ---
+
+@dp.callback_query(F.data.startswith("library_page_"))
+async def show_library_page(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    try:
+        page = int(callback.data.split("_")[2])
+    except (IndexError, ValueError):
+        page = 0
+
+    # ЗМІНА: Показуємо по 10 статей на сторінці
+    LIMIT = 10
+    offset = page * LIMIT
+    
+    # Дістаємо дані
+    articles = await db.get_user_library(user_id, limit=LIMIT, offset=offset)
+    total_count = await db.count_user_library(user_id)
+    
+    # Розраховуємо загальну кількість сторінок для відображення (наприклад: Сторінка 1 з 3)
+    import math
+    total_pages = math.ceil(total_count / LIMIT)
+    if total_pages == 0: total_pages = 1
+
+    if not articles:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 В Академію", callback_data="mode_academy")
+        await callback.message.edit_text(
+            "📚 **Моя Бібліотека**\n\nТут поки що пусто. Вивчи свій перший урок!", 
+            reply_markup=kb.as_markup(),
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+
+    text = (
+        f"📚 **Бібліотека** (Стор. {page + 1}/{total_pages})\n"
+        f"Всього записів: **{total_count}**\n\n"
+        f"👇 *Натисни, щоб відкрити:*",
+    )
+    
+    kb = InlineKeyboardBuilder()
+    
+    for art in articles:
+        title = art['title']
+        # Трохи жорсткіше обрізаємо назву, щоб список з 10 кнопок виглядав акуратно
+        if len(title) > 25: 
+            title = title[:23] + ".."
+            
+        btn_text = f"📜 {art['day']:02d}.{art['month']:02d} | {title}"
+        kb.row(InlineKeyboardButton(text=btn_text, callback_data=f"library_open_{art['id']}"))
+
+    # Навігація
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Туди", callback_data=f"library_page_{page - 1}"))
+    
+    if total_count > offset + LIMIT:
+        nav_buttons.append(InlineKeyboardButton(text="Сюди ➡️", callback_data=f"library_page_{page + 1}"))
+    
+    if nav_buttons:
+        kb.row(*nav_buttons)
+    
+    kb.row(InlineKeyboardButton(text="🔙 В Академію", callback_data="mode_academy"))
+
+    # Оскільки text у нас кортеж (через кому в кінці), беремо [0]
+    final_text = text[0] if isinstance(text, tuple) else text
+
+    await callback.message.edit_text(final_text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("library_open_"))
+async def open_archived_article(callback: types.CallbackQuery):
+    try:
+        article_id = int(callback.data.split("_")[2])
+    except ValueError:
+        await callback.answer("Помилка відкриття.")
+        return
+
+    # Дістаємо статтю і рендеримо її
+    article = await db.get_article_by_id(article_id)
+    if article:
+        # Відкриваємо статтю як зазвичай
+        await render_article(callback, article, callback.from_user.id)
+    else:
+        await callback.answer("Статтю не знайдено.")
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
 

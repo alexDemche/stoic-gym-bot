@@ -402,3 +402,27 @@ class Database:
                 article_id
             )
             return dict(row) if row else None
+        
+    async def get_user_library(self, user_id, limit=5, offset=0):
+        """Повертає список вивчених статей з пагінацією"""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT a.id, a.title, a.day, a.month
+                FROM academy_articles a
+                JOIN user_academy_progress u ON a.id = u.article_id
+                WHERE u.user_id = $1
+                ORDER BY u.read_at DESC
+                LIMIT $2 OFFSET $3
+                """,
+                user_id, limit, offset
+            )
+            return [dict(row) for row in rows]
+
+    async def count_user_library(self, user_id):
+        """Рахує загальну кількість вивчених статей"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT COUNT(*) FROM user_academy_progress WHERE user_id = $1", 
+                user_id
+            )
