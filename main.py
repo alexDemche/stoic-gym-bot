@@ -224,46 +224,59 @@ async def cmd_stats(message: types.Message):
     )
 
 
-# --- ЛОГІКА: Академія Стоїцизму ---
-# Оновлений хендлер показу статті
+# --- ЛОГІКА: Академія Стоїцизму (Теорія) ---
+
+async def render_article(callback: types.CallbackQuery, article, user_id):
+    """Універсальна функція для відображення статті та кнопок"""
+    # 1. Отримуємо статус статті та прогрес
+    is_read = await db.is_article_read(user_id, article['id'])
+    count, rank = await db.get_academy_progress(user_id)
+    daily_count = await db.get_daily_academy_count(user_id)
+    
+    # 2. Формуємо текст статті через сервіс
+    text = format_article(article)
+    
+    # Додаємо інформацію про денний ліміт у текст
+    limit_text = f"\n\n📊 Сьогодні засвоєно: **{daily_count}/5** уроків."
+    
+    # 3. Створюємо клавіатуру
+    kb = InlineKeyboardBuilder()
+    
+    # Ряд 1: Навігація (використовуємо день та місяць з об'єкта article)
+    kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
+    kb.button(text="➡️ Наступний", callback_data=f"academy_nav_next_{article['day']}_{article['month']}")
+    
+    # Ряд 2: Динамічна кнопка "Прочитано"
+    if is_read:
+        kb.button(text="🌟 Вже вивчено", callback_data="academy_already_done")
+    else:
+        kb.button(text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}")
+        
+    # Ряд 3: Повернення
+    kb.button(text="🔙 В меню", callback_data="back_home")
+    
+    kb.adjust(2, 1, 1)
+    
+    try:
+        await callback.message.edit_text(
+            text + limit_text, 
+            reply_markup=kb.as_markup(), 
+            parse_mode="Markdown"
+        )
+    except Exception:
+        # Ігноруємо помилку, якщо текст не змінився
+        pass
+
 @dp.callback_query(F.data == "mode_academy")
 async def show_academy_article(callback: types.CallbackQuery):
     now = datetime.now()
-    day = now.day
-    month = now.month
-
-    article = await db.get_article_by_date(day, month)
-
-    # Якщо статті немає (наприклад, база пуста)
-    if not article:
-        await callback.message.edit_text(
-            "Поки що тут пусто.", reply_markup=get_main_menu()
-        )
-        return
-
-    text = format_article(article)
-
-    kb = InlineKeyboardBuilder()
-    # Навігація
-    kb.button(text="⬅️ Минулий урок", callback_data=f"academy_nav_prev_{day}_{month}")
-    kb.button(text="➡️ Наступний урок", callback_data=f"academy_nav_next_{day}_{month}")
-    # Кнопка Прочитано (передаємо ID статті)
-    kb.button(
-        text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}"
-    )
-    # Меню
-    kb.button(text="🔙 В меню", callback_data="back_home")
-
-    # Схема розташування: 2 кнопки навігації, 1 кнопка прочитано, 1 кнопка меню
-    kb.adjust(2, 1, 1)
-
-    await callback.message.edit_text(
-        text, reply_markup=kb.as_markup(), parse_mode="Markdown"
-    )
+    article = await db.get_article_by_date(now.day, now.month)
+    if article:
+        await render_article(callback, article, callback.from_user.id)
+    else:
+        await callback.answer("Сьогоднішня сторінка Академії ще пуста.", show_alert=True)
     await callback.answer()
 
-
-# Оновлений хендлер навігації
 @dp.callback_query(F.data.startswith("academy_nav_"))
 async def navigate_academy(callback: types.CallbackQuery):
     parts = callback.data.split("_")
@@ -272,73 +285,63 @@ async def navigate_academy(callback: types.CallbackQuery):
     current_month = int(parts[4])
 
     from datetime import date, timedelta
+    # Використовуємо 2024 рік для коректної роботи календаря
+    try:
+        current_date = date(2024, current_month, current_day)
+        if direction == "next":
+            new_date = current_date + timedelta(days=1)
+        else:
+            new_date = current_date - timedelta(days=1)
+        
+        new_day, new_month = new_date.day, new_date.month
+        article = await db.get_article_by_date(new_day, new_month)
 
-    # Використовуємо 2024 рік (високосний), щоб уникнути помилок з 29 лютого
-    current_date = date(2024, current_month, current_day)
-
-    if direction == "next":
-        new_date = current_date + timedelta(days=1)
-    else:
-        new_date = current_date - timedelta(days=1)
-
-    new_day = new_date.day
-    new_month = new_date.month
-
-    article = await db.get_article_by_date(new_day, new_month)
-
-    if not article:
-        await callback.answer("Цієї сторінки Академії ще немає.", show_alert=True)
-        return
-
-    text = format_article(article)
-
-    kb = InlineKeyboardBuilder()
-    kb.button(
-        text="⬅️ Минулий урок", callback_data=f"academy_nav_prev_{new_day}_{new_month}"
-    )
-    kb.button(
-        text="➡️ Наступний урок",
-        callback_data=f"academy_nav_next_{new_day}_{new_month}",
-    )
-    # Тут теж додаємо ID нової статті
-    kb.button(
-        text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}"
-    )
-    kb.button(text="🔙 В меню", callback_data="back_home")
-    kb.adjust(2, 1, 1)
-
-    await callback.message.edit_text(
-        text, reply_markup=kb.as_markup(), parse_mode="Markdown"
-    )
+        if article:
+            await render_article(callback, article, callback.from_user.id)
+        else:
+            await callback.answer("Цієї сторінки ще немає в архівах.", show_alert=True)
+    except Exception as e:
+        logging.error(f"Navigation error: {e}")
+        await callback.answer("Помилка навігації.")
     await callback.answer()
 
+@dp.callback_query(F.data == "academy_already_done")
+async def handle_already_read(callback: types.CallbackQuery):
+    await callback.answer("Ти вже засвоїв цей урок! Мудрість назавжди з тобою. 🤝", show_alert=False)
 
 @dp.callback_query(F.data.startswith("academy_read_"))
 async def handle_read_article(callback: types.CallbackQuery):
-    # Витягуємо ID статті з callback_data
-    article_id = int(callback.data.split("_")[2])
+    try:
+        article_id = int(callback.data.split("_")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Помилка даних.")
+        return
+
     user_id = callback.from_user.id
+    
+    # 1. Перевірка ліміту 5/5
+    daily_count = await db.get_daily_academy_count(user_id)
+    if daily_count >= 5:
+        await callback.answer(
+            "🛑 Твій розум сьогодні переповнений (5/5).\n"
+            "Стоїки радять не поспішати. Повертайся завтра!", 
+            show_alert=True
+        )
+        return
 
-    # Спроба зарахувати
+    # 2. Записуємо прочитання
     is_new = await db.mark_article_as_read(user_id, article_id)
-
-    # Отримуємо актуальну статистику
-    count, rank = await db.get_academy_progress(user_id)
-
-    if is_new:
-        # Перевіряємо, чи змінився клас чи читає вперше
-        await callback.answer(
-            f"📚 Урок зараховано!\n"
-            f"Твій прогрес: {count} статей.\n"
-            f"Статус: {rank}",
-            show_alert=True,
-        )
+    
+    # 3. Отримуємо статтю для оновлення кнопок
+    article = await db.get_article_by_id(article_id)
+    
+    if article:
+        await render_article(callback, article, user_id)
+        if is_new:
+            count, rank = await db.get_academy_progress(user_id)
+            await callback.answer(f"🎉 Зараховано! Статус: {rank}", show_alert=True)
     else:
-        # Якщо вже читав
-        await callback.answer(
-            f"Ти вже закріпив цей урок. 🤝\nВсього уроків: {count}", show_alert=False
-        )
-
+        await callback.answer("Статтю не знайдено.")
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
 

@@ -373,3 +373,32 @@ class Database:
                 rank = "🎓 Магістр Стоїцизму (Університет)"  # Якщо пройде весь рік
 
             return count, rank
+
+    async def is_article_read(self, user_id, article_id):
+        """Перевіряє, чи читав користувач цю статтю раніше"""
+        async with self.pool.acquire() as conn:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM user_academy_progress WHERE user_id = $1 AND article_id = $2",
+                user_id, article_id
+            )
+            return bool(exists)
+
+    async def get_daily_academy_count(self, user_id):
+        """Рахує кількість уроків, засвоєних сьогодні"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM user_academy_progress 
+                WHERE user_id = $1 AND read_at::date = CURRENT_DATE
+                """,
+                user_id
+            )
+
+    async def get_article_by_id(self, article_id):
+        """Отримує статтю за її унікальним ID"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(  
+                "SELECT * FROM academy_articles WHERE id = $1", 
+                article_id
+            )
+            return dict(row) if row else None
