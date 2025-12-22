@@ -227,44 +227,49 @@ async def cmd_stats(message: types.Message):
 # --- ЛОГІКА: Академія Стоїцизму (Теорія) ---
 
 async def render_article(callback: types.CallbackQuery, article, user_id):
-    """Універсальна функція для відображення статті та кнопок"""
-    # 1. Отримуємо статус статті та прогрес
+    """Універсальна функція відображення статті з контролем лімітів та довжини тексту"""
     is_read = await db.is_article_read(user_id, article['id'])
-    count, rank = await db.get_academy_progress(user_id)
+    # count, rank = await db.get_academy_progress(user_id) # Можна розкоментувати, якщо треба в тексті
     daily_count = await db.get_daily_academy_count(user_id)
     
-    # 2. Формуємо текст статті через сервіс
-    text = format_article(article)
+    # Отримуємо основний текст
+    full_text = format_article(article)
+    limit_info = f"\n\n📊 Сьогодні засвоєно: **{daily_count}/5** уроків."
     
-    # Додаємо інформацію про денний ліміт у текст
-    limit_text = f"\n\n📊 Сьогодні засвоєно: **{daily_count}/5** уроків."
-    
-    # 3. Створюємо клавіатуру
+    # Виправляємо помилку MESSAGE_TOO_LONG
+    final_text = full_text + limit_info
+    if len(final_text) > 4000:
+        final_text = final_text[:3990] + "...\n\n*(Текст скорочено через ліміти Telegram)*"
+
     kb = InlineKeyboardBuilder()
     
-    # Ряд 1: Навігація (використовуємо день та місяць з об'єкта article)
+    # --- ЛОГІКА КНОПКИ "НАСТУПНИЙ" ---
+    # Якщо ліміт вичерпано і стаття ще не читана, кнопка веде на відпочинок
+    if daily_count >= 5 and not is_read:
+        next_callback = "academy_limit_reached"
+        next_text = "➡️ (Відпочинок)"
+    else:
+        next_callback = f"academy_nav_next_{article['day']}_{article['month']}"
+        next_text = "➡️ Наступний"
+
     kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
-    kb.button(text="➡️ Наступний", callback_data=f"academy_nav_next_{article['day']}_{article['month']}")
+    kb.button(text=next_text, callback_data=next_callback)
     
-    # Ряд 2: Динамічна кнопка "Прочитано"
     if is_read:
         kb.button(text="🌟 Вже вивчено", callback_data="academy_already_done")
     else:
         kb.button(text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}")
         
-    # Ряд 3: Повернення
     kb.button(text="🔙 В меню", callback_data="back_home")
-    
     kb.adjust(2, 1, 1)
     
     try:
         await callback.message.edit_text(
-            text + limit_text, 
+            final_text, 
             reply_markup=kb.as_markup(), 
             parse_mode="Markdown"
         )
     except Exception:
-        # Ігноруємо помилку, якщо текст не змінився
         pass
 
 @dp.callback_query(F.data == "mode_academy")
@@ -309,39 +314,48 @@ async def navigate_academy(callback: types.CallbackQuery):
 async def handle_already_read(callback: types.CallbackQuery):
     await callback.answer("Ти вже засвоїв цей урок! Мудрість назавжди з тобою. 🤝", show_alert=False)
 
+@dp.callback_query(F.data == "academy_limit_reached")
+async def handle_limit_reached_nav(callback: types.CallbackQuery):
+    # Скорочений текст (максимум 200 символів для alert)
+    text = (
+        "Ти засвоїв 5 уроків сьогодні! ✨\n\n"
+        "Стоїки кажуть: знання мають «прорости» всередині нас, а для цього потрібен спокій.\n\n"
+        "Відпочинь, і завтра продовжимо! 🏛️"
+    )
+    await callback.answer(text, show_alert=True)
+
 @dp.callback_query(F.data.startswith("academy_read_"))
 async def handle_read_article(callback: types.CallbackQuery):
-    try:
-        article_id = int(callback.data.split("_")[2])
-    except (IndexError, ValueError):
-        await callback.answer("Помилка даних.")
-        return
-
+    article_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
     
-    # 1. Перевірка ліміту 5/5
     daily_count = await db.get_daily_academy_count(user_id)
     if daily_count >= 5:
-        await callback.answer(
-            "🛑 Твій розум сьогодні переповнений (5/5).\n"
-            "Стоїки радять не поспішати. Повертайся завтра!", 
-            show_alert=True
-        )
+        # Використовуємо той самий лояльний текст
+        await handle_limit_reached_nav(callback)
         return
 
-    # 2. Записуємо прочитання
     is_new = await db.mark_article_as_read(user_id, article_id)
-    
-    # 3. Отримуємо статтю для оновлення кнопок
     article = await db.get_article_by_id(article_id)
     
     if article:
+        # Отримуємо оновлені дані після запису
+        new_count, rank = await db.get_academy_progress(user_id)
+        new_daily = await db.get_daily_academy_count(user_id)
+        
         await render_article(callback, article, user_id)
+        
         if is_new:
-            count, rank = await db.get_academy_progress(user_id)
-            await callback.answer(f"🎉 Зараховано! Статус: {rank}", show_alert=True)
+            # ДЕТАЛЬНИЙ АЛЕРТ ІЗ ЗАГАЛЬНОЮ КІЛЬКІСТЮ
+            await callback.answer(
+                f"🎉 Урок зараховано!\n\n"
+                f"📚 Всього вивчено: {new_count}\n"
+                f"📊 За сьогодні: {new_daily}/5\n"
+                f"🎓 Твій клас: {rank}", 
+                show_alert=True
+            )
     else:
-        await callback.answer("Статтю не знайдено.")
+        await callback.answer("Архів: статті немає.")
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
 
