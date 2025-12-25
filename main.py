@@ -257,7 +257,7 @@ async def render_article(callback: types.CallbackQuery, article, user_id):
     if is_read:
         kb.button(text="🌟 Вже вивчено", callback_data="academy_already_done")
     else:
-        kb.button(text="✅ Прочитано (Зарахувати)", callback_data=f"academy_read_{article['id']}")
+        kb.button(text="Зарахувати урок (+1 бал)", callback_data=f"academy_read_{article['id']}")
         
     kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
     kb.button(text=next_text, callback_data=next_callback)
