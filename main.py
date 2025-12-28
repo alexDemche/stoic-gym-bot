@@ -11,6 +11,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.session.aiohttp import AiohttpSession # Для таймаутів
+from aiogram.exceptions import TelegramBadRequest        # Для обробки помилок
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
@@ -49,7 +51,9 @@ db = Database()
 
 # --- ІНІЦІАЛІЗАЦІЯ ---
 logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
+# Додаємо сесію з таймаутом у 60 секунд
+session = AiohttpSession(timeout=60)
+bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 
 
@@ -175,11 +179,20 @@ async def show_profile(callback: types.CallbackQuery):
     builder.button(text="🔙 В меню", callback_data="back_home")
     builder.adjust(1)
 
-    await callback.message.edit_text(
-        text, reply_markup=builder.as_markup(), parse_mode="Markdown"
-    )
-    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=builder.as_markup(), parse_mode="Markdown"
+        )
+    except Exception as e:
+        # Якщо текст не змінився або повідомлення видалене - просто ігноруємо помилку
+        logging.error(f"Помилка при редагуванні профілю: {e}")
 
+    # Спроба відповісти на кнопку (найважливіше місце для "query is too old")
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        # Якщо запит застарів (бот спав) - просто пишемо в лог і не "падаємо"
+        logging.info("Запит профілю застарів, ігноруємо.")
 
 # --- ЛОГІКА: СТАРТ І МЕНЮ ---
 
@@ -206,13 +219,21 @@ async def cmd_start(message: types.Message):
 async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()  # <-- ВАЖЛИВО: Виходимо з будь-якого режиму (ШІ, гра, фідбек)
     """Обробник для кнопки "Назад в меню"."""
-    await callback.message.edit_text(
-        "👋 **Вітаю в Stoic Trainer!**\n\n" "Обери режим для тренування духу:",
-        reply_markup=get_main_menu(),
-        parse_mode="Markdown",
-    )
-    await callback.answer()  # Скидаємо статус "завантаження" з кнопки
+    try:
+        await callback.message.edit_text(
+            "👋 **Вітаю в Stoic Trainer!**\n\nОбери режим для тренування духу:",
+            reply_markup=get_main_menu(),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass # Якщо повідомлення вже таке саме, ігноруємо
 
+    # ЗАХИЩЕНИЙ ВАРІАНТ ВІДПОВІДІ НА КНОПКУ:
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        # Якщо бот лагав 5 хвилин, просто ігноруємо цей старий запит
+        logging.info("Старий запит ігноровано")
 
 # --- АДМІН-КОМАНДА ---
 @dp.message(Command("stats"))
@@ -373,15 +394,13 @@ async def show_library_page(callback: types.CallbackQuery):
     except (IndexError, ValueError):
         page = 0
 
-    # ЗМІНА: Показуємо по 10 статей на сторінці
     LIMIT = 10
     offset = page * LIMIT
     
-    # Дістаємо дані
+    # Дістаємо дані з бази
     articles = await db.get_user_library(user_id, limit=LIMIT, offset=offset)
     total_count = await db.count_user_library(user_id)
     
-    # Розраховуємо загальну кількість сторінок для відображення (наприклад: Сторінка 1 з 3)
     import math
     total_pages = math.ceil(total_count / LIMIT)
     if total_pages == 0: total_pages = 1
@@ -389,12 +408,22 @@ async def show_library_page(callback: types.CallbackQuery):
     if not articles:
         kb = InlineKeyboardBuilder()
         kb.button(text="🔙 В Академію", callback_data="mode_academy")
-        await callback.message.edit_text(
-            "📚 **Моя Бібліотека**\n\nТут поки що пусто. Вивчи свій перший урок!", 
-            reply_markup=kb.as_markup(),
-            parse_mode="Markdown"
-        )
-        await callback.answer()
+        
+        # Спроба відредагувати текст (якщо бот "прокинувся" після лагу)
+        try:
+            await callback.message.edit_text(
+                "📚 **Моя Бібліотека**\n\nТут поки що пусто. Вивчи свій перший урок!", 
+                reply_markup=kb.as_markup(),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+        # Відповідаємо на кнопку (захищено)
+        try:
+            await callback.answer()
+        except TelegramBadRequest:
+            logging.info("Запит порожньої бібліотеки застарів")
         return
 
     text = (
@@ -407,18 +436,15 @@ async def show_library_page(callback: types.CallbackQuery):
     
     for art in articles:
         title = art['title']
-        # Трохи жорсткіше обрізаємо назву, щоб список з 10 кнопок виглядав акуратно
         if len(title) > 25: 
             title = title[:23] + ".."
             
         btn_text = f"📜 {art['day']:02d}.{art['month']:02d} | {title}"
         kb.row(InlineKeyboardButton(text=btn_text, callback_data=f"library_open_{art['id']}"))
 
-    # Навігація
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️ Туди", callback_data=f"library_page_{page - 1}"))
-    
     if total_count > offset + LIMIT:
         nav_buttons.append(InlineKeyboardButton(text="Сюди ➡️", callback_data=f"library_page_{page + 1}"))
     
@@ -427,11 +453,26 @@ async def show_library_page(callback: types.CallbackQuery):
     
     kb.row(InlineKeyboardButton(text="🔙 В Академію", callback_data="mode_academy"))
 
-    # Оскільки text у нас кортеж (через кому в кінці), беремо [0]
     final_text = text[0] if isinstance(text, tuple) else text
 
-    await callback.message.edit_text(final_text, reply_markup=kb.as_markup(), parse_mode="Markdown")
-    await callback.answer()
+    # --- ВЗАЄМОДІЯ З TELEGRAM (ЗАХИЩЕНА) ---
+
+    # 1. Редагуємо список сторінок
+    try:
+        await callback.message.edit_text(
+            final_text, 
+            reply_markup=kb.as_markup(), 
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logging.error(f"Помилка оновлення сторінки бібліотеки: {e}")
+
+    # 2. Відповідаємо на клік кнопки
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        # Це саме те місце, де виникала помилка "query is too old"
+        logging.info("Запит сторінки бібліотеки застарів, ігноруємо.")
 
 @dp.callback_query(F.data.startswith("library_open_"))
 async def open_archived_article(callback: types.CallbackQuery):
@@ -451,28 +492,40 @@ async def open_archived_article(callback: types.CallbackQuery):
 
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
 
-
 @dp.callback_query(F.data == "mode_quotes")
 async def start_quotes(callback: types.CallbackQuery):
     await send_random_quote(callback)
-
 
 @dp.callback_query(F.data == "refresh_quote")
 async def refresh_quote(callback: types.CallbackQuery):
     await send_random_quote(callback)
 
-
 async def send_random_quote(callback: types.CallbackQuery):
     quote = random.choice(STOIC_DB)
     text = f"📜 *{quote['category']}*\n\n_{quote['text']}_\n\n— {quote['author']}"
 
-    # try/except на випадок, якщо випаде та сама цитата (Telegram не любить редагувати текст на той самий)
+    # 1. Спроба оновити текст цитати
     try:
         await callback.message.edit_text(
             text, reply_markup=get_quote_keyboard(), parse_mode="Markdown"
         )
-    except Exception:
-        await callback.answer("Це та сама цитата. Спробуй ще!")
+    except Exception as e:
+        # Найчастіша помилка тут — "Message is not modified", 
+        # якщо рандом вибрав ту саму цитату, що вже на екрані.
+        logging.info(f"Помилка оновлення цитати: {e}")
+        
+        # Можна вивести маленьке сповіщення юзеру, якщо хочеш
+        try:
+            await callback.answer("Випала та сама цитата. Спробуй ще раз! 🔄")
+            return
+        except Exception:
+            pass
+
+    # 2. Спроба підтвердити клік (захист від застарілих запитів)
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        logging.info("Запит цитати застарів.")
 
 
 # --- ЛОГІКА: MEMENTO MORI (ТАЙМЕР ЖИТТЯ) ---
@@ -512,14 +565,24 @@ async def reset_memento_date(callback: types.CallbackQuery, state: FSMContext):
     kb = InlineKeyboardBuilder()
     kb.button(text="🔙 Скасувати", callback_data="back_home")
     
-    await callback.message.edit_text(
-        "🔄 **Зміна дати**\n\n" 
-        "Введи нову дату народження (наприклад: `24.08.1991`) або просто рік:",
-        reply_markup=kb.as_markup(),
-        parse_mode="Markdown",
-    )
+    # Додано try/except для безпечного редагування тексту
+    try:
+        await callback.message.edit_text(
+            "🔄 **Зміна дати**\n\n" 
+            "Введи нову дату народження (наприклад: `24.08.1991`) або просто рік:",
+            reply_markup=kb.as_markup(),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
     await state.set_state(MementoMori.waiting_for_birthdate)
-    await callback.answer()
+
+    # Додано захист для відповіді на кнопку
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        logging.info("Запит зміни дати Memento Mori застарів")
 
 
 @dp.callback_query(F.data == "mode_memento")
@@ -539,26 +602,36 @@ async def start_memento(callback: types.CallbackQuery, state: FSMContext):
         kb.button(text="🔙 В меню", callback_data="back_home")
         kb.adjust(1) # Кнопки одна під одною
 
-        await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+        # Додано try/except для редагування тексту
+        try:
+            await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+        except Exception:
+            pass
     else:
         # --- ВАРІАНТ 2: ДАТИ НЕМАЄ (ПЕРШИЙ ВХІД) ---
         kb = InlineKeyboardBuilder()
-        # ВАЖЛИВО: Додаємо кнопку виходу, якщо юзер передумав
         kb.button(text="🔙 Назад в меню", callback_data="back_home")
         
-        await callback.message.edit_text(
-            "⏳ **Memento Mori**\n\n"
-            "Щоб візуалізувати твій час, мені потрібно знати дату народження.\n\n"
-            "👇 Напиши її у чат:\n"
-            "• Повну: `24.08.1995`\n"
-            "• Або рік: `1995`",
-            reply_markup=kb.as_markup(),
-            parse_mode="Markdown",
-        )
+        # Додано try/except для редагування тексту
+        try:
+            await callback.message.edit_text(
+                "⏳ **Memento Mori**\n\n"
+                "Щоб візуалізувати твій час, мені потрібно знати дату народження.\n\n"
+                "👇 Напиши її у чат:\n"
+                "• Повну: `24.08.1995`\n"
+                "• Або рік: `1995`",
+                reply_markup=kb.as_markup(),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
         await state.set_state(MementoMori.waiting_for_birthdate)
 
-    await callback.answer()
-
+    # Додано захист для відповіді на кнопку
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        logging.info("Запит Memento Mori застарів")
 
 @dp.message(MementoMori.waiting_for_birthdate)
 async def process_birthdate(message: types.Message, state: FSMContext):
@@ -947,7 +1020,7 @@ async def reset_gym(callback: types.CallbackQuery):
 # Переконайтеся, що back_to_main_menu() знаходиться ВИЩЕ у коді!
 @dp.callback_query(
     lambda c: c.data and c.data.startswith("game_") and c.data not in ["game_next"]
-)  # Додаємо фільтр "game_next"
+)
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
@@ -966,10 +1039,8 @@ async def handle_game_choice(callback: types.CallbackQuery):
             new_score = current_score + points_change
             new_level = current_level + 1
 
-            # --- Оновлення бази даних відбувається тут ---
+            # 1. Оновлюємо базу даних (це критично важливо, робимо без try/except для Telegram)
             await db.update_game_progress(user_id, new_score, new_level)
-
-            # --- Записуємо хід в історію
             await db.log_move(user_id, current_level, points_change)
 
             # Визначаємо фідбек
@@ -980,48 +1051,45 @@ async def handle_game_choice(callback: types.CallbackQuery):
             else:
                 score_feedback = "⚪ **0 балів**"
 
-            # 1. СТВОРЕННЯ КЛАВІАТУРИ ДЛЯ ПРОДОВЖЕННЯ
             kb = InlineKeyboardBuilder()
-
             max_level = len(SCENARIOS)
 
+            # Формуємо текст та кнопки
             if new_level > max_level:
-                # 2. ЛОГІКА ПЕРЕМОГИ
-                final_score = new_score
-
-                await callback.message.edit_text(
+                msg_text = (
                     f"🏆 **ПЕРЕМОГА!** Ти завершив усі {max_level} рівнів!\n"
-                    f"Твій фінальний рахунок: **{final_score}**\n"
-                    f"«Невдача — це ціна навчання, успіх — це результат практики.»",
-                    reply_markup=InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="🔙 В меню", callback_data="back_home"
-                                )
-                            ]
-                        ]
-                    ),
+                    f"Твій фінальний рахунок: **{new_score}**\n"
+                    f"«Невдача — це ціна навчання, успіх — це результат практики.»"
                 )
+                kb.button(text="🔙 В меню", callback_data="back_home")
             else:
-                # 3. КНОПКИ "ПРОДОВЖИТИ" / "В МЕНЮ"
+                msg_text = (
+                    f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
+                    f"{score_feedback}\n\n"
+                    f"💡 *{selected_option['msg']}*"
+                )
                 kb.button(text="🔙 В меню", callback_data="back_home")
                 kb.button(text="▶️ Продовжити", callback_data="game_next")
                 kb.adjust(2)
 
+            # --- ТУТ ЗАХИЩЕНА ВЗАЄМОДІЯ З TELEGRAM ---
+
+            # 2. Спроба оновити екран результату
+            try:
                 await callback.message.edit_text(
-                    f"{scenario['text']}\n\n✅ **Твій вибір:** {selected_option['text']}\n\n"
-                    f"{score_feedback}\n\n"
-                    f"💡 *{selected_option['msg']}*",
+                    msg_text,
                     reply_markup=kb.as_markup(),
-                    parse_mode="Markdown",
+                    parse_mode="Markdown"
                 )
+            except Exception as e:
+                # Наприклад, якщо користувач натиснув двічі дуже швидко
+                logging.error(f"Game edit error: {e}")
 
-            # Видаляємо стару паузу
-            # await asyncio.sleep(4)
-            # await send_level(user_id, callback.message) # Це тепер робить game_next
-
-    await callback.answer()
+    # 3. Відповідаємо на клік (захист від "query is too old")
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        logging.info("Ігноруємо застарілий вибір у грі.")
 
 
 # --- Розсилка повідомлень юзерам ---
