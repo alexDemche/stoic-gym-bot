@@ -66,7 +66,7 @@ def get_main_menu():
     builder.button(text="📖 Академія (Теорія)", callback_data="mode_academy")
     
     builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
-    builder.button(text="🧘‍♂️ Breath Flow (Дихання)", url="https://t.me/breath_flow_ua_bot")
+    builder.button(text="🧘‍♂️ Lab (Лабараторні)", url="https://t.me/StoicTrainerLab_ua_bot")
 
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
