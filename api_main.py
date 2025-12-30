@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from db import Database
 
+from utils import get_stoic_rank
+
 app = FastAPI(title="Stoic Trainer API")
 app.add_middleware(
     CORSMiddleware,
@@ -57,12 +59,19 @@ async def add_article(article: AcademyArticle):
 
 @app.get("/stats/{user_id}")
 async def get_user_stats(user_id: int):
+    # Отримуємо дані з бази
     score, level = await db.get_stats(user_id)
+    energy = await db.check_energy(user_id) 
+    
+    # Вираховуємо ранг на основі балів
+    rank_name = get_stoic_rank(score)
+    
     return {
         "user_id": user_id, 
         "score": score, 
         "level": level,
-        "rank": "Practical Stoic" # Тут можна додати логіку рангів
+        "energy": energy,
+        "rank": rank_name  # Тепер повертається динамічний ранг
     }
 
 if __name__ == "__main__":

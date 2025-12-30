@@ -16,6 +16,8 @@ from aiogram.exceptions import TelegramBadRequest        # Для обробки
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
+from utils import get_stoic_rank
+
 from academy_service import format_article
 from ai_service import get_stoic_advice
 # Імпортуємо базу цитат з data.py
@@ -91,23 +93,6 @@ def get_quote_keyboard():
 
 
 # --- ЛОГІКА ПРОФІЛЮ ТА РАНГІВ ---
-
-
-def get_stoic_rank(score):
-    if score < 50:
-        return "🌱 Неофіт"
-    elif score < 150:
-        return "🎒 Учень"
-    elif score < 500:
-        return "🏃 Практик"  # Раніше це був майже кінець
-    elif score < 1000:
-        return "🧠 Філософ"  # Новий рівень
-    elif score < 2500:
-        return "🛡️ Майстер Стійкості"
-    elif score < 5000:
-        return "🏛️ Мудрець"
-    else:
-        return "👑 Стоїчний Ідеал"  # Елітний статус
 
 
 @dp.callback_query(F.data == "mode_profile")
