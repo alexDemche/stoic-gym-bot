@@ -7,6 +7,15 @@ from db import Database
 
 from utils import get_stoic_rank
 
+# Отримуємо токен із замінних оточення
+ADMIN_TOKEN = os.getenv("ADMIN_SECRET_TOKEN")
+
+# Функція перевірки (Dependency)
+async def verify_admin(x_admin_token: str = Header(None)):
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Ви не маєте прав для цієї дії")
+    return x_admin_token
+
 app = FastAPI(title="Stoic Trainer API")
 app.add_middleware(
     CORSMiddleware,
@@ -44,16 +53,13 @@ async def root():
 
 # МАРШРУТ ДЛЯ ЗАВАНТАЖЕННЯ СТАТЕЙ
 @app.post("/articles/add")
-async def add_article(article: AcademyArticle):
+async def add_article(article: AcademyArticle, token: str = Depends(verify_admin)):
     try:
         await db.add_academy_article(
-            article.day, 
-            article.month, 
-            article.title, 
-            article.content, 
-            article.reflection
+            article.day, article.month, 
+            article.title, article.content, article.reflection
         )
-        return {"message": f"Стаття '{article.title}' успішно додана на {article.day}.{article.month}"}
+        return {"message": "Статтю додано успішно"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
