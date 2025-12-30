@@ -52,8 +52,8 @@ db = Database()
 # --- ІНІЦІАЛІЗАЦІЯ ---
 logging.basicConfig(level=logging.INFO)
 # Додаємо сесію з таймаутом у 60 секунд
-session = AiohttpSession(timeout=60)
-bot = Bot(token=BOT_TOKEN, session=session)
+# session = AiohttpSession(timeout=60)
+# bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 
 
@@ -1170,6 +1170,8 @@ async def process_ai_chat(message: types.Message, state: FSMContext):
 
 
 async def main():
+    logging.info("🏁 Старт системи...")
+    bot = Bot(token=BOT_TOKEN)
     # 1. ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ
     await db.connect()
     await db.create_tables()
@@ -1193,7 +1195,7 @@ async def main():
 # Використання: /broadcast Текст повідомлення
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: types.Message):
-    ADMIN_ID = 7597463225
+    ADMIN_ID = os.getenv("ADMIN_ID")
     if message.from_user.id != ADMIN_ID:
         return
 
