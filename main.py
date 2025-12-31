@@ -100,7 +100,7 @@ async def show_profile(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     # 1. Отримуємо дані гри (Gym)
-    score, level = await db.get_stats(user_id)
+    score, level, _ = await db.get_stats(user_id)
     birth_date = await db.get_birthdate(user_id)
     energy = await db.check_energy(user_id)
 
@@ -685,7 +685,7 @@ async def start_gym(callback: types.CallbackQuery):
     await db.add_user(user_id, callback.from_user.first_name)
 
     # Отримуємо поточний прогрес
-    score, level = await db.get_stats(user_id)
+    score, level, _ = await db.get_stats(user_id)
 
     builder = InlineKeyboardBuilder()
     builder.button(text="▶️ Продовжити тренування", callback_data="game_start")
@@ -887,7 +887,7 @@ async def send_level(user_id, message_to_edit):
         return
 
     # 2. ОТРИМАННЯ СТАТИСТИКИ
-    score, current_level = await db.get_stats(user_id)
+    score, current_level, _ = await db.get_stats(user_id)
     max_scenarios = len(SCENARIOS)  # Зараз 60, потім буде 100
 
     # 3. ЛОГІКА ВИБОРУ СЦЕНАРІЮ (Endless Mode)
@@ -1009,7 +1009,7 @@ async def reset_gym(callback: types.CallbackQuery):
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
-    current_score, current_level = await db.get_stats(user_id)
+    current_score, current_level, _ = await db.get_stats(user_id)
 
     if current_level in SCENARIOS:
         scenario = SCENARIOS[current_level]
