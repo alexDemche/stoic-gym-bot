@@ -183,7 +183,7 @@ async def show_profile(callback: types.CallbackQuery):
 
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, bot: Bot):
     # Передаємо ID та Ім'я (first_name)
     user_name = (
         message.from_user.first_name if message.from_user.first_name else "друже"
@@ -1129,7 +1129,7 @@ async def start_ai_mentor(callback: types.CallbackQuery, state: FSMContext):
 
 
 @dp.message(MentorState.chatting)
-async def process_ai_chat(message: types.Message, state: FSMContext):
+async def process_ai_chat(message: types.Message, state: FSMContext, bot: Bot):
     user_text = message.text
 
     # Показуємо, що бот "друкує" (це важливо для UX, бо ШІ думає 2-3 сек)
@@ -1179,8 +1179,8 @@ async def main():
 # --- АДМІН-КОМАНДА: РОЗСИЛКА ---
 # Використання: /broadcast Текст повідомлення
 @dp.message(Command("broadcast"))
-async def cmd_broadcast(message: types.Message):
-    ADMIN_ID = os.getenv("ADMIN_ID")
+async def cmd_broadcast(message: types.Message, bot: Bot):
+    ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
     if message.from_user.id != ADMIN_ID:
         return
 
@@ -1228,13 +1228,13 @@ async def start_feedback(callback: types.CallbackQuery, state: FSMContext):
 
 
 @dp.message(FeedbackState.waiting_for_message)
-async def process_feedback(message: types.Message, state: FSMContext):
+async def process_feedback(message: types.Message, state: FSMContext, bot: Bot):
     user_text = message.text
     user_id = message.from_user.id
     user_name = message.from_user.first_name
 
     # ID адміна
-    ADMIN_ID = 7597463225
+    ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
     # 1. Відправляємо повідомлення (адміну)
     try:
