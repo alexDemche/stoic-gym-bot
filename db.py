@@ -426,3 +426,49 @@ class Database:
                 "SELECT COUNT(*) FROM user_academy_progress WHERE user_id = $1", 
                 user_id
             )
+            
+    # --- НОВІ ТАБЛИЦІ ДЛЯ ЦИТАТ ТА ГРИ ---
+    async def create_content_tables(self):
+        async with self.pool.acquire() as conn:
+            # Таблиця цитат
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS quotes (
+                    id SERIAL PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    author TEXT,
+                    category TEXT
+                )
+            """)
+            # Таблиця сценаріїв Gym
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS scenarios (
+                    id SERIAL PRIMARY KEY,
+                    text TEXT NOT NULL
+                )
+            """)
+            # Таблиця варіантів відповідей
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS scenario_options (
+                    id SERIAL PRIMARY KEY,
+                    scenario_id INTEGER REFERENCES scenarios(id),
+                    option_id TEXT, -- твій "lvl1_opt1"
+                    text TEXT NOT NULL,
+                    score INTEGER,
+                    msg TEXT
+                )
+            """)
+
+    async def get_random_quote(self):
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT text, author, category FROM quotes ORDER BY RANDOM() LIMIT 1")
+            return dict(row) if row else None
+
+    async def get_scenario_by_level(self, level: int):
+        async with self.pool.acquire() as conn:
+            scenario = await conn.fetchrow("SELECT id, text FROM scenarios WHERE id = $1", level)
+            if not scenario: return None
+            options = await conn.fetch("SELECT option_id, text, score, msg FROM scenario_options WHERE scenario_id = $1", scenario['id'])
+            return {
+                "text": scenario['text'],
+                "options": [dict(opt) for opt in options]
+            }

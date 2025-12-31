@@ -11,3 +11,5 @@ venv/
 
 # OS
 .DS_Store
+
+migrate_data.py
