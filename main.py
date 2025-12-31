@@ -1078,7 +1078,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
 
 
 # --- Розсилка повідомлень юзерам ---
-async def send_daily_quote():
+async def send_daily_quote(bot: Bot):
     """Розсилає випадкову цитату всім користувачам"""
     users = await db.get_all_users()
 
@@ -1166,7 +1166,7 @@ async def main():
     # 2. ПЛАНУВАЛЬНИК (SCHEDULER)
     scheduler = AsyncIOScheduler()
     # 07:30 UTC = 09:30 за Києвом
-    scheduler.add_job(send_daily_quote, trigger="cron", hour=7, minute=30)
+    scheduler.add_job(send_daily_quote, trigger="cron", hour=7, minute=30, kwargs={"bot": bot})
     scheduler.start()
 
     # 3. ЗАПУСК БОТА (Видаляємо зайві коментарі, просто запускаємо)
