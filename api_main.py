@@ -57,17 +57,31 @@ async def root():
 
 @api_router.get("/stats/{user_id}")
 async def get_user_stats(user_id: int):
-    score, level = await db.get_stats(user_id)
+    # 1. Отримуємо 3 значення (score, level, name)
+    score, level, name = await db.get_stats(user_id) 
     energy = await db.check_energy(user_id)
     birthdate = await db.get_birthdate(user_id)
     rank_name = get_stoic_rank(score)
+    
+    thresholds = [50, 150, 500, 1000, 2500, 5000]
+    # За замовчуванням 0, якщо поріг не знайдено (максимальний рівень)
+    next_rank_score = 0 
+
+    # 2.
+    for t in thresholds:
+        if score < t:
+            next_rank_score = t
+            break
+    
     return {
         "user_id": user_id, 
+        "name": name,
         "score": score, 
         "level": level,
         "energy": energy,
         "birthdate": birthdate,
-        "rank": rank_name
+        "rank": rank_name,
+        "next_rank_score": next_rank_score
     }
 
 @api_router.get("/quotes/random")
