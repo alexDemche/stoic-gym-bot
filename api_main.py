@@ -34,6 +34,11 @@ class AcademyArticle(BaseModel):
     title: str
     content: str
     reflection: str = ""
+    
+# Модель для запиту на прочитання
+class AcademyReadRequest(BaseModel):
+    user_id: int
+    article_id: int
 
 @app.on_event("startup")
 async def startup():
@@ -90,15 +95,6 @@ async def add_article(article: AcademyArticle, token: str = Depends(verify_admin
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@api_router.get("/academy/articles")
-async def get_all_articles(limit: int = 20, offset: int = 0):
-    # Отримуємо список статей для бібліотеки
-    async with db.pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2",
-            limit, offset
-        )
-        return [dict(row) for row in rows]
 
 @api_router.get("/academy/articles/{article_id}")
 async def get_article_detail(article_id: int):
@@ -106,6 +102,52 @@ async def get_article_detail(article_id: int):
     if not article:
         raise HTTPException(status_code=404, detail="Статтю не знайдено")
     return article
+
+# 1. Отримати всі статті та статус прогресу користувача
+@api_router.get("/academy/status/{user_id}")
+async def get_academy_status(user_id: int):
+    count, rank = await db.get_academy_progress(user_id)
+    daily_count = await db.get_daily_academy_count(user_id)
+    return {
+        "total_learned": count,
+        "rank": rank,
+        "daily_count": daily_count,
+        "can_learn_more": daily_count < 5
+    }
+
+# 2. Список усіх статей (для головного списку)
+@api_router.get("/academy/articles")
+async def get_articles(limit: int = 50, offset: int = 0):
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2",
+            limit, offset
+        )
+        return [dict(row) for row in rows]
+
+# 3. Список вивчених статей (Бібліотека)
+@api_router.get("/academy/library/{user_id}")
+async def get_user_library(user_id: int):
+    # Використовуємо твій метод з db.py
+    articles = await db.get_user_library(user_id, limit=100)
+    return articles
+
+# 4. Перевірка конкретної статті (вивчена чи ні)
+@api_router.get("/academy/check/{user_id}/{article_id}")
+async def check_article(user_id: int, article_id: int):
+    is_read = await db.is_article_read(user_id, article_id)
+    return {"is_read": is_read}
+
+# 5. Зарахувати урок
+@api_router.post("/academy/complete")
+async def complete_lesson(req: AcademyReadRequest):
+    daily_count = await db.get_daily_academy_count(req.user_id)
+    if daily_count >= 5:
+        return {"success": False, "error": "limit_reached"}
+    
+    # mark_article_as_read вже повертає True, якщо це новий запис
+    is_new = await db.mark_article_as_read(req.user_id, req.article_id)
+    return {"success": True, "is_new": is_new}
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
