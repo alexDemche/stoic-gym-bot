@@ -183,10 +183,16 @@ async def get_leaderboard(limit: int = 20):
 
 @api_router.get("/gym/scenario/{user_id}")
 async def get_next_gym_scenario(user_id: int):
-    # 1. Перевіряємо енергію (авто-відновлення вбудовано в check_energy)
     energy = await db.check_energy(user_id)
+    
     if energy <= 0:
-        return {"error": "no_energy", "message": "Енергія вичерпана. Повертайтесь завтра."}
+        # Викликаємо твій існуючий метод з db.py
+        summary = await db.get_daily_summary(user_id)
+        return {
+            "error": "no_energy", 
+            "message": "Енергія вичерпана",
+            "summary": summary # Додаємо об'єкт зі статистикою
+        }
 
     # 2. Отримуємо поточний рівень
     score, level, _ = await db.get_stats(user_id)

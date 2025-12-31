@@ -479,10 +479,19 @@ class Database:
 
     async def get_scenario_by_level(self, level: int):
         async with self.pool.acquire() as conn:
+            # 1. Отримуємо текст сценарію
             scenario = await conn.fetchrow("SELECT id, text FROM scenarios WHERE id = $1", level)
-            if not scenario: return None
-            options = await conn.fetch("SELECT option_id, text, score, msg FROM scenario_options WHERE scenario_id = $1", scenario['id'])
+            if not scenario: 
+                return None
+                
+            # 2. Отримуємо варіанти відповідей
+            options = await conn.fetch(
+                "SELECT option_id as id, text, score, msg FROM scenario_options WHERE scenario_id = $1", 
+                scenario['id']
+            )
+            
             return {
+                "id": scenario['id'],
                 "text": scenario['text'],
                 "options": [dict(opt) for opt in options]
             }
