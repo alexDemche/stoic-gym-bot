@@ -1,16 +1,14 @@
 import os
 import uvicorn
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, APIRouter # Додали APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from db import Database
-
 from utils import get_stoic_rank
 
-# Отримуємо токен із замінних оточення
+# --- НАЛАШТУВАННЯ ---
 ADMIN_TOKEN = os.getenv("ADMIN_SECRET_TOKEN")
 
-# Функція перевірки (Dependency)
 async def verify_admin(x_admin_token: str = Header(None)):
     if x_admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="Ви не маєте прав для цієї дії")
@@ -19,14 +17,17 @@ async def verify_admin(x_admin_token: str = Header(None)):
 app = FastAPI(title="Stoic Trainer API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # У продакшені краще вказати конкретні домени
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 db = Database()
 
-# Модель даних для додавання статті
+# --- СТВОРЮЄМО РОУТЕР З ПРЕФІКСОМ /api ---
+api_router = APIRouter(prefix="/api")
+
 class AcademyArticle(BaseModel):
     day: int
     month: int
@@ -37,22 +38,46 @@ class AcademyArticle(BaseModel):
 @app.on_event("startup")
 async def startup():
     await db.connect()
-    # Створюємо таблиці, якщо вони ще не існують
     await db.create_tables()
     await db.create_academy_table()
     await db.create_progress_table()
 
+# Залишаємо root поза /api для перевірки статусу (healthcheck)
 @app.get("/")
 async def root():
     user_count = await db.count_users()
+    return {"status": "online", "total_users": user_count}
+
+# --- ДОДАЄМО ЕНДПОІНТИ В РОУТЕР ---
+
+@api_router.get("/stats/{user_id}")
+async def get_user_stats(user_id: int):
+    score, level = await db.get_stats(user_id)
+    energy = await db.check_energy(user_id) 
+    rank_name = get_stoic_rank(score)
     return {
-        "status": "online",
-        "service": "Stoic Trainer API",
-        "total_users": user_count
+        "user_id": user_id, 
+        "score": score, 
+        "level": level,
+        "energy": energy,
+        "rank": rank_name
     }
 
-# МАРШРУТ ДЛЯ ЗАВАНТАЖЕННЯ СТАТЕЙ
-@app.post("/articles/add")
+@api_router.get("/quotes/random")
+async def get_random_quote():
+    quote = await db.get_random_quote()
+    if not quote:
+        return {"text": "Живи зараз.", "author": "Сенека", "category": "Час"}
+    return quote
+
+@api_router.get("/gym/level/{level_num}")
+async def get_gym_level(level_num: int):
+    scenario = await db.get_scenario_by_level(level_num)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Рівень не знайдено")
+    return scenario
+
+@api_router.post("/articles/add")
 async def add_article(article: AcademyArticle, token: str = Depends(verify_admin)):
     try:
         await db.add_academy_article(
@@ -63,37 +88,8 @@ async def add_article(article: AcademyArticle, token: str = Depends(verify_admin
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/stats/{user_id}")
-async def get_user_stats(user_id: int):
-    # Отримуємо дані з бази
-    score, level = await db.get_stats(user_id)
-    energy = await db.check_energy(user_id) 
-    
-    # Вираховуємо ранг на основі балів
-    rank_name = get_stoic_rank(score)
-    
-    return {
-        "user_id": user_id, 
-        "score": score, 
-        "level": level,
-        "energy": energy,
-        "rank": rank_name  # Тепер повертається динамічний ранг
-    }
-    
-@app.get("/api/quotes/random")
-async def get_random_quote():
-    quote = await db.get_random_quote()
-    if not quote:
-        # Якщо в БД ще порожньо, віддаємо дефолтну, щоб додаток не впав
-        return {"text": "Живи зараз.", "author": "Сенека", "category": "Час"}
-    return quote
-
-@app.get("/api/gym/level/{level_num}")
-async def get_gym_level(level_num: int):
-    scenario = await db.get_scenario_by_level(level_num)
-    if not scenario:
-        raise HTTPException(status_code=404, detail="Рівень не знайдено")
-    return scenario
+# --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
+app.include_router(api_router)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
