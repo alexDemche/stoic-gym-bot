@@ -89,6 +89,23 @@ async def add_article(article: AcademyArticle, token: str = Depends(verify_admin
         return {"message": "Статтю додано успішно"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@api_router.get("/academy/articles")
+async def get_all_articles(limit: int = 20, offset: int = 0):
+    # Отримуємо список статей для бібліотеки
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2",
+            limit, offset
+        )
+        return [dict(row) for row in rows]
+
+@api_router.get("/academy/articles/{article_id}")
+async def get_article_detail(article_id: int):
+    article = await db.get_article_by_id(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Статтю не знайдено")
+    return article
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
