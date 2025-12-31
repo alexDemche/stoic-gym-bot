@@ -58,7 +58,8 @@ async def root():
 @api_router.get("/stats/{user_id}")
 async def get_user_stats(user_id: int):
     # 1. Отримуємо 3 значення (score, level, name)
-    score, level, name = await db.get_stats(user_id) 
+    score, level, name = await db.get_stats(user_id)
+    global_rank = await db.get_user_position(user_id)
     energy = await db.check_energy(user_id)
     birthdate = await db.get_birthdate(user_id)
     rank_name = get_stoic_rank(score)
@@ -81,6 +82,7 @@ async def get_user_stats(user_id: int):
         "energy": energy,
         "birthdate": birthdate,
         "rank": rank_name,
+        "global_rank": global_rank,
         "next_rank_score": next_rank_score
     }
 

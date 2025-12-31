@@ -112,6 +112,17 @@ class Database:
             return await conn.fetch(
                 "SELECT username, score FROM users ORDER BY score DESC LIMIT $1", limit
             )
+            
+    async def get_user_position(self, user_id):
+        async with self.pool.acquire() as conn:
+            # Рахуємо, скільки людей мають більше балів, ніж цей користувач
+            query = """
+                SELECT COUNT(*) + 1 
+                FROM users 
+                WHERE score > (SELECT score FROM users WHERE user_id = $1)
+            """
+            position = await conn.fetchval(query, user_id)
+            return position or 0
 
     async def count_users(self):
         async with self.pool.acquire() as conn:
