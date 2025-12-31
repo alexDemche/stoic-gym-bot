@@ -100,7 +100,7 @@ async def show_profile(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     # 1. Отримуємо дані гри (Gym)
-    score, level, _ = await db.get_stats(user_id)
+    score, level, name = await db.get_stats(user_id)
     birth_date = await db.get_birthdate(user_id)
     energy = await db.check_energy(user_id)
 
@@ -135,7 +135,7 @@ async def show_profile(callback: types.CallbackQuery):
     # 5. Формуємо красивий текст
     text = (
         f"👤 **Особиста справа Стоїка**\n"
-        f"🏷️ Ім'я: **{callback.from_user.first_name}**\n\n"
+        f"🏷️ Ім'я: **{name}**\n\n"
         f"⚔️ **STOIC GYM (Практика)**\n"
         f"🏅 Звання: **{game_rank}**\n"
         f"💎 Бали мудрості: **{score}**{progress_msg}\n"
