@@ -181,6 +181,60 @@ async def get_leaderboard(limit: int = 20):
         })
     return leaderboard
 
+@api_router.get("/gym/scenario/{user_id}")
+async def get_next_gym_scenario(user_id: int):
+    # 1. Перевіряємо енергію (авто-відновлення вбудовано в check_energy)
+    energy = await db.check_energy(user_id)
+    if energy <= 0:
+        return {"error": "no_energy", "message": "Енергія вичерпана. Повертайтесь завтра."}
+
+    # 2. Отримуємо поточний рівень
+    score, level, _ = await db.get_stats(user_id)
+    
+    # 3. Отримуємо сценарій (в db.py вже є get_scenario_by_level)
+    # Якщо рівень > сенаріїв гри, підставляємо випадковий (Endless Mode)
+    max_scenarios = await db.pool.fetchval("SELECT COUNT(*) FROM scenarios")
+    # 4. Логіка вибору ID сценарію
+    is_endless = level > max_scenarios
+    if not is_endless:
+        target_id = level # Йдемо по порядку 1, 2, 3... 100
+    else:
+        # Вибираємо випадковий сценарій з тих, що існують
+        target_id = random.randint(1, max_scenarios)
+    
+    scenario = await db.get_scenario_by_level(target_id)
+    
+    if not scenario:
+        return {"error": "not_found", "message": "Сценарій не знайдено."}
+
+    return {
+        "scenario": scenario,
+        "energy": energy,
+        "level": level,
+        "is_endless": is_endless,
+        "max_levels": max_scenarios
+    }
+
+@api_router.post("/gym/answer")
+async def submit_gym_answer(data: dict):
+    user_id = data.get("user_id")
+    option_score = data.get("score") # бали за обраний варіант
+    level = data.get("level")
+    
+    # 1. Отримуємо поточні статки
+    current_score, current_level, _ = await db.get_stats(user_id)
+    
+    # 2. Оновлюємо прогрес (бали + рівень)
+    new_score = current_score + option_score
+    new_level = current_level + 1
+    await db.update_game_progress(user_id, new_score, new_level)
+    
+    # 3. Списуємо енергію та записуємо в історію
+    await db.decrease_energy(user_id)
+    await db.log_move(user_id, level, option_score)
+    
+    return {"status": "success", "new_score": new_score, "new_level": new_level}
+
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
 
