@@ -88,15 +88,15 @@ class Database:
 
         
     async def get_stats(self, user_id):
-    async with self.pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT score, level, first_name FROM users WHERE user_id = $1", 
-            user_id
-        )
-        if row:
-            # Повертаємо score, level та ім'я
-            return row['score'], row['level'], row['first_name']
-        return 0, 1, "Мандрівник"
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT score, level, first_name FROM users WHERE user_id = $1", 
+                user_id
+            )
+            if row:
+                # Повертаємо score, level та ім'я
+                return row['score'], row['level'], row['first_name']
+            return 0, 1, "Мандрівник"
 
     async def update_game_progress(self, user_id, score, level):
         async with self.pool.acquire() as conn:
