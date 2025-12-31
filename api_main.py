@@ -79,6 +79,21 @@ async def get_user_stats(user_id: int):
         "energy": energy,
         "rank": rank_name  # Тепер повертається динамічний ранг
     }
+    
+@app.get("/api/quotes/random")
+async def get_random_quote():
+    quote = await db.get_random_quote()
+    if not quote:
+        # Якщо в БД ще порожньо, віддаємо дефолтну, щоб додаток не впав
+        return {"text": "Живи зараз.", "author": "Сенека", "category": "Час"}
+    return quote
+
+@app.get("/api/gym/level/{level_num}")
+async def get_gym_level(level_num: int):
+    scenario = await db.get_scenario_by_level(level_num)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Рівень не знайдено")
+    return scenario
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
