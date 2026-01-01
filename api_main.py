@@ -241,6 +241,23 @@ async def submit_gym_answer(data: dict):
     
     return {"status": "success", "new_score": new_score, "new_level": new_level}
 
+# Щоденник
+@api_router.post("/journal/save")
+async def save_entry(data: dict):
+    user_id = data.get("user_id")
+    text = data.get("text")
+    if not user_id or not text:
+        return {"error": "missing_data"}
+    
+    await db.save_journal_entry(user_id, text)
+    return {"status": "success"}
+
+@api_router.get("/journal/history/{user_id}")
+async def get_history(user_id: int, limit: int = 5):
+    entries = await db.get_journal_entries(user_id, limit)
+    # Перетворюємо записи з бази у список словників для JSON
+    return [dict(e) for e in entries]
+
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
 
