@@ -299,16 +299,25 @@ async def mentor_history(user_id: int):
 
 @api_router.post("/mentor/chat")
 async def mentor_chat(data: dict):
-    user_id = data.get("user_id")
-    messages = data.get("messages", [])
-    last_user_msg = messages[-1]["content"]
-
-    # 1. Зберігаємо повідомлення користувача в базу
-    await db.save_mentor_message(user_id, "user", last_user_msg)
-    
-    system_prompt = {"role": "system", "content": SYSTEM_PROMPT_AI_MSG}
-    
     try:
+        user_id = data.get("user_id")
+        messages = data.get("messages", [])
+        
+        if not messages:
+            return {"reply": "Я не почув твого питання, мій друже."}
+            
+        last_user_msg = messages[-1]["content"]
+
+        print(f"DEBUG: Спроба запису в базу для юзера {user_id}")
+
+        # 1. Зберігаємо повідомлення користувача
+        # Додаємо int() про всяк випадок, якщо з фронта прийшов рядок
+        await db.save_mentor_message(int(user_id), "user", last_user_msg)
+        print("DEBUG: Повідомлення користувача збережено")
+        
+        system_prompt = {"role": "system", "content": SYSTEM_PROMPT_AI_MSG}
+        
+        # Виклик OpenAI
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[system_prompt] + messages,
@@ -316,12 +325,16 @@ async def mentor_chat(data: dict):
         )
         reply = response.choices[0].message.content
         
-        # 2. Зберігаємо відповідь ШІ в базу
-        await db.save_mentor_message(user_id, "assistant", reply)
+        # 2. Зберігаємо відповідь ШІ
+        await db.save_mentor_message(int(user_id), "assistant", reply)
+        print("DEBUG: Відповідь ШІ збережена")
         
         return {"reply": reply}
+
     except Exception as e:
-        return {"reply": "Мій розум зараз у тумані..."}
+        # Цей принт покаже РЕАЛЬНУ помилку в логах Railway
+        print(f"!!! CRITICAL ERROR IN MENTOR_CHAT: {e}")
+        return {"reply": f"Мій розум зараз у тумані... (Помилка: {e})"}
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
