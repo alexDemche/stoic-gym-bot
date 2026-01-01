@@ -289,6 +289,38 @@ async def mentor_chat(data: dict):
         return {"reply": response.choices[0].message.content}
     except Exception as e:
         return {"reply": "Мій розум зараз у тумані... Спробуймо пізніше."}
+    
+# ШІ Ментор
+@api_router.get("/mentor/history/{user_id}")
+async def mentor_history(user_id: int):
+    entries = await db.get_mentor_history(user_id)
+    return [dict(e) for e in entries]
+
+@api_router.post("/mentor/chat")
+async def mentor_chat(data: dict):
+    user_id = data.get("user_id")
+    messages = data.get("messages", [])
+    last_user_msg = messages[-1]["content"]
+
+    # 1. Зберігаємо повідомлення користувача в базу
+    await db.save_mentor_message(user_id, "user", last_user_msg)
+    
+    system_prompt = {"role": "system", "content": "Ти — Марк Аврелій..."}
+    
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[system_prompt] + messages,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content
+        
+        # 2. Зберігаємо відповідь ШІ в базу
+        await db.save_mentor_message(user_id, "assistant", reply)
+        
+        return {"reply": reply}
+    except Exception as e:
+        return {"reply": "Мій розум зараз у тумані..."}
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)

@@ -49,8 +49,20 @@ class Database:
                 )
             """
             )
+            
+            # 3. НОВА: Таблиця історії Ментора
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS mentor_history (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    role VARCHAR(20), -- 'user' або 'assistant'
+                    content TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                )
+            """)
 
-            # 3. Таблиця історії ігор (для щоденного звіту)
+            # 4. Таблиця історії ігор (для щоденного звіту)
             await conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS game_history (
@@ -504,3 +516,18 @@ class Database:
                 "text": scenario['text'],
                 "options": [dict(opt) for opt in options]
             }
+    
+    # ШІ Ментор
+    async def save_mentor_message(self, user_id, role, content):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO mentor_history (user_id, role, content) VALUES ($1, $2, $3)",
+                user_id, role, content
+            )
+
+    async def get_mentor_history(self, user_id, limit=20):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                "SELECT role, content FROM mentor_history WHERE user_id = $1 ORDER BY created_at ASC LIMIT $2",
+                user_id, limit
+            )
