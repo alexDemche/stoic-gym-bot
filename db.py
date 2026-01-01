@@ -221,6 +221,15 @@ class Database:
                 user_id,
                 limit,
             )
+            
+    async def delete_journal_entry(self, user_id, entry_id):
+        """Видаляє запис щоденника, перевіряючи власника"""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM journal WHERE id = $1 AND user_id = $2",
+                entry_id,
+                user_id
+            )
 
     # --- ІСТОРІЯ ІГОР (GAME HISTORY) ---
 

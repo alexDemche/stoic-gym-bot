@@ -258,6 +258,11 @@ async def get_history(user_id: int, limit: int = 5):
     # Перетворюємо записи з бази у список словників для JSON
     return [dict(e) for e in entries]
 
+@api_router.delete("/journal/delete/{entry_id}")
+async def delete_entry(entry_id: int, user_id: int):
+    await db.delete_journal_entry(user_id, entry_id)
+    return {"status": "success"}
+
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
 
