@@ -520,10 +520,31 @@ class Database:
     # ШІ Ментор
     async def save_mentor_message(self, user_id, role, content):
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO mentor_history (user_id, role, content) VALUES ($1, $2, $3)",
-                user_id, role, content
-            )
+            try:
+                # 1. Конвертуємо в int, щоб asyncpg не видав помилку типу
+                safe_user_id = int(user_id)
+                
+                await conn.execute(
+                    """
+                    INSERT INTO mentor_history (user_id, role, content) 
+                    VALUES ($1, $2, $3)
+                    """,
+                    safe_user_id, role, content
+                )
+            except Exception as e:
+                # Це покаже нам в логах Railway, ЧОМУ саме не вдалося зберегти
+                print(f"❌ DATABASE ERROR [save_mentor_message]: {e}")
+                
+                # Якщо помилка через Foreign Key (юзера нема в базі), 
+                # ми можемо спробувати створити його "на льоту"
+                if "fk_user" in str(e).lower() or "foreign key" in str(e).lower():
+                    print(f"⚠️ Юзера {user_id} не знайдено в таблиці users. Створюємо...")
+                    await self.add_user(safe_user_id, "Мандрівник")
+                    # Пробуємо ще раз після створення юзера
+                    await conn.execute(
+                        "INSERT INTO mentor_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        safe_user_id, role, content
+                    )
 
     async def get_mentor_history(self, user_id, limit=20):
         async with self.pool.acquire() as conn:

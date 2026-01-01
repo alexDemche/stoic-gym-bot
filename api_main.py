@@ -267,33 +267,11 @@ async def delete_entry(entry_id: int, user_id: int):
     await db.delete_journal_entry(user_id, entry_id)
     return {"status": "success"}
 
-# ШІ Ментор
-@api_router.post("/mentor/chat")
-async def mentor_chat(data: dict):
-    user_id = data.get("user_id")
-    # Отримуємо масив повідомлень з фронтенда: [{"role": "user", "content": "..."}, ...]
-    messages = data.get("messages", []) 
-    
-    system_message = {
-        "role": "system", 
-        "content": """Ти — Марк Аврелій, римський імператор. Спілкуйся українською. 
-        Твій тон: спокійний та емпатичний. Допомагай відділяти те, що ми контролюємо, від того, що ні. 
-        Відповідай лаконічно (до 100 слів)."""
-    }
+# --- ШІ МЕНТОР (ЧИСТА ЛОГІКА) ---
 
-    try:
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[system_message] + messages, # Додаємо системний промпт до історії
-            temperature=0.7,
-        )
-        return {"reply": response.choices[0].message.content}
-    except Exception as e:
-        return {"reply": "Мій розум зараз у тумані... Спробуймо пізніше."}
-    
-# ШІ Ментор
 @api_router.get("/mentor/history/{user_id}")
-async def mentor_history(user_id: int):
+async def get_mentor_chat_history(user_id: int):
+    # Отримуємо історію з бази
     entries = await db.get_mentor_history(user_id)
     return [dict(e) for e in entries]
 
@@ -308,16 +286,15 @@ async def mentor_chat(data: dict):
             
         last_user_msg = messages[-1]["content"]
 
-        print(f"DEBUG: Спроба запису в базу для юзера {user_id}")
+        # Перевіряємо, чи є юзер у базі, щоб не впав Foreign Key
+        # Якщо юзера немає - додаємо його (як "Мандрівника")
+        await db.add_user(int(user_id), "Мандрівник")
 
         # 1. Зберігаємо повідомлення користувача
-        # Додаємо int() про всяк випадок, якщо з фронта прийшов рядок
         await db.save_mentor_message(int(user_id), "user", last_user_msg)
-        print("DEBUG: Повідомлення користувача збережено")
-        
-        system_prompt = {"role": "system", "content": SYSTEM_PROMPT_AI_MSG}
         
         # Виклик OpenAI
+        system_prompt = {"role": "system", "content": SYSTEM_PROMPT_AI_MSG}
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[system_prompt] + messages,
@@ -327,14 +304,12 @@ async def mentor_chat(data: dict):
         
         # 2. Зберігаємо відповідь ШІ
         await db.save_mentor_message(int(user_id), "assistant", reply)
-        print("DEBUG: Відповідь ШІ збережена")
         
         return {"reply": reply}
 
     except Exception as e:
-        # Цей принт покаже РЕАЛЬНУ помилку в логах Railway
         print(f"!!! CRITICAL ERROR IN MENTOR_CHAT: {e}")
-        return {"reply": f"Мій розум зараз у тумані... (Помилка: {e})"}
+        return {"reply": f"Мій розум зараз у тумані... Спробуй пізніше."}
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
