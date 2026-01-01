@@ -546,9 +546,15 @@ class Database:
                         safe_user_id, role, content
                     )
 
-    async def get_mentor_history(self, user_id, limit=20):
+    async def get_mentor_history(self, user_id, limit=50):
         async with self.pool.acquire() as conn:
             return await conn.fetch(
-                "SELECT role, content FROM mentor_history WHERE user_id = $1 ORDER BY created_at ASC LIMIT $2",
+                """
+                SELECT role, content, created_at 
+                FROM mentor_history 
+                WHERE user_id = $1 
+                ORDER BY created_at DESC 
+                LIMIT $2
+                """,
                 user_id, limit
             )
