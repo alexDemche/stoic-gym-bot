@@ -1,5 +1,6 @@
 import os
 import uvicorn
+from openai import AsyncOpenAI
 from fastapi import FastAPI, HTTPException, Header, Depends, APIRouter # Додали APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,6 +9,8 @@ from utils import get_stoic_rank
 
 # --- НАЛАШТУВАННЯ ---
 ADMIN_TOKEN = os.getenv("ADMIN_SECRET_TOKEN")
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 async def verify_admin(x_admin_token: str = Header(None)):
     if x_admin_token != ADMIN_TOKEN:
@@ -262,6 +265,30 @@ async def get_history(user_id: int, limit: int = 5):
 async def delete_entry(entry_id: int, user_id: int):
     await db.delete_journal_entry(user_id, entry_id)
     return {"status": "success"}
+
+# ШІ Ментор
+@api_router.post("/mentor/chat")
+async def mentor_chat(data: dict):
+    user_id = data.get("user_id")
+    # Отримуємо масив повідомлень з фронтенда: [{"role": "user", "content": "..."}, ...]
+    messages = data.get("messages", []) 
+    
+    system_message = {
+        "role": "system", 
+        "content": """Ти — Марк Аврелій, римський імператор. Спілкуйся українською. 
+        Твій тон: спокійний та емпатичний. Допомагай відділяти те, що ми контролюємо, від того, що ні. 
+        Відповідай лаконічно (до 100 слів)."""
+    }
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[system_message] + messages, # Додаємо системний промпт до історії
+            temperature=0.7,
+        )
+        return {"reply": response.choices[0].message.content}
+    except Exception as e:
+        return {"reply": "Мій розум зараз у тумані... Спробуймо пізніше."}
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)
