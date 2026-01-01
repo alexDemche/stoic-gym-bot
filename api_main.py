@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from db import Database
 from utils import get_stoic_rank
+from config import SYSTEM_PROMPT_AI_MSG
 
 # --- НАЛАШТУВАННЯ ---
 ADMIN_TOKEN = os.getenv("ADMIN_SECRET_TOKEN")
@@ -305,7 +306,7 @@ async def mentor_chat(data: dict):
     # 1. Зберігаємо повідомлення користувача в базу
     await db.save_mentor_message(user_id, "user", last_user_msg)
     
-    system_prompt = {"role": "system", "content": "Ти — Марк Аврелій..."}
+    system_prompt = {"role": "system", "content": SYSTEM_PROMPT_AI_MSG}
     
     try:
         response = await client.chat.completions.create(
