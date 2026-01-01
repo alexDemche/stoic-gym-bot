@@ -217,7 +217,7 @@ class Database:
         """Отримує останні записи щоденника"""
         async with self.pool.acquire() as conn:
             return await conn.fetch(
-                "SELECT entry_text, created_at FROM journal WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+                "SELECT id, entry_text, created_at FROM journal WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
                 user_id,
                 limit,
             )
