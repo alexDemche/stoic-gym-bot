@@ -350,7 +350,7 @@ async def sync_with_code(data: dict):
         raise HTTPException(status_code=400, detail="Код відсутній")
 
     async with db.pool.acquire() as conn:
-        # 1. Видаляємо та отримуємо user_id
+        # 1. Видаляємо код та отримуємо ID користувача
         row = await conn.fetchrow("""
             DELETE FROM sync_codes 
             WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc')
@@ -360,16 +360,26 @@ async def sync_with_code(data: dict):
         if not row:
             raise HTTPException(status_code=401, detail="Код недійсний або застарів")
         
-        # 2. Отримуємо дані (тепер метод існує!)
-        user_data = await db.get_full_user_data(row['user_id'])
+        user_id = row['user_id']
+        
+        # 2. Отримуємо базові дані (score, level, birthdate, energy)
+        user_data = await db.get_full_user_data(user_id)
         
         if not user_data:
-            raise HTTPException(status_code=404, detail="Користувача не знайдено в базі")
+            raise HTTPException(status_code=404, detail="Користувача не знайдено")
+
+        # 3. ДОДАЄМО ДАНІ АКАДЕМІЇ
+        # Викликаємо метод з db.py
+        academy_count, academy_rank = await db.get_academy_progress(user_id)
+        
+        # Записуємо їх прямо в словник user_data
+        user_data['academy_total'] = academy_count
+        user_data['academy_rank'] = academy_rank
         
         return {
             "status": "success", 
-            "user_id": int(row['user_id']), 
-            "user_data": user_data # user_data вже є словником
+            "user_id": int(user_id), 
+            "user_data": user_data 
         }
 
 
