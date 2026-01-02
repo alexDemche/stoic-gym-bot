@@ -6,23 +6,22 @@ from datetime import datetime
 from urllib.parse import quote
 
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.client.session.aiohttp import AiohttpSession  # Для таймаутів
+from aiogram.exceptions import TelegramBadRequest  # Для обробки помилок
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.client.session.aiohttp import AiohttpSession # Для таймаутів
-from aiogram.exceptions import TelegramBadRequest        # Для обробки помилок
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-
-from utils import get_stoic_rank
 
 from academy_service import format_article
 from ai_service import get_stoic_advice
 # Імпортуємо базу цитат з data.py
 from data import HELP_TEXT, SCENARIOS, STOIC_DB
 from db import Database
+from utils import get_stoic_rank
 
 # --- НАЛАШТУВАННЯ ---
 load_dotenv()
@@ -66,16 +65,18 @@ def get_main_menu():
     builder.button(text="⚔️ Stoic Gym (Гра)", callback_data="mode_gym")
 
     builder.button(text="📖 Академія (Теорія)", callback_data="mode_academy")
-    
+
     builder.button(text="🤖 Ментор (AI)", callback_data="mode_ai")
-    builder.button(text="🧘‍♂️ Lab (Лабараторні)", url="https://t.me/StoicTrainerLab_ua_bot")
+    builder.button(
+        text="🧘‍♂️ Lab (Лабараторні)", url="https://t.me/StoicTrainerLab_ua_bot"
+    )
 
     builder.button(text="🧙‍♂️ Оракул (Цитати)", callback_data="mode_quotes")
     builder.button(text="⏳ Memento Mori (Час)", callback_data="mode_memento")
 
     builder.button(text="👤 Мій Профіль", callback_data="mode_profile")
     builder.button(text="🏆 Топ Стоїків", callback_data="mode_top")
-    
+
     builder.button(text="📚 Допомога", callback_data="show_help")
     builder.button(text="✉️ Написати автору", callback_data="send_feedback")
 
@@ -179,6 +180,7 @@ async def show_profile(callback: types.CallbackQuery):
         # Якщо запит застарів (бот спав) - просто пишемо в лог і не "падаємо"
         logging.info("Запит профілю застарів, ігноруємо.")
 
+
 # --- ЛОГІКА: СТАРТ І МЕНЮ ---
 
 
@@ -211,7 +213,7 @@ async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
             parse_mode="Markdown",
         )
     except Exception:
-        pass # Якщо повідомлення вже таке саме, ігноруємо
+        pass  # Якщо повідомлення вже таке саме, ігноруємо
 
     # ЗАХИЩЕНИЙ ВАРІАНТ ВІДПОВІДІ НА КНОПКУ:
     try:
@@ -219,6 +221,7 @@ async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         # Якщо бот лагав 5 хвилин, просто ігноруємо цей старий запит
         logging.info("Старий запит ігноровано")
+
 
 # --- АДМІН-КОМАНДА ---
 @dp.message(Command("stats"))
@@ -232,25 +235,50 @@ async def cmd_stats(message: types.Message):
     )
 
 
+# --- СИНХРОНІЗАЦІЯ З ДОДАТКОМ ---
+@dp.message(Command("sync"))
+async def cmd_sync(message: types.Message):
+    """Команда для отримання коду синхронізації з мобільним додатком"""
+    user_id = message.from_user.id
+
+    # Перевіряємо, чи є юзер у базі взагалі
+    score, _, _ = await db.get_stats(user_id)
+
+    code = await generate_sync_code(user_id)
+
+    text = (
+        "🔐 **Синхронізація з додатком**\n\n"
+        f"Твій тимчасовий код: `{code}`\n\n"
+        "⏳ Код діє **10 хвилин**.\n"
+        "Введи його в мобільному додатку Stoic Academy, щоб перенести свій прогрес, "
+        "бали мудрості та записи щоденника."
+    )
+
+    await message.answer(text, parse_mode="Markdown")
+
+
 # --- ЛОГІКА: Академія Стоїцизму (Теорія) ---
+
 
 async def render_article(callback: types.CallbackQuery, article, user_id):
     """Універсальна функція відображення статті з контролем лімітів та довжини тексту"""
-    is_read = await db.is_article_read(user_id, article['id'])
+    is_read = await db.is_article_read(user_id, article["id"])
     # count, rank = await db.get_academy_progress(user_id) # Можна розкоментувати, якщо треба в тексті
     daily_count = await db.get_daily_academy_count(user_id)
-    
+
     # Отримуємо основний текст
     full_text = format_article(article)
     limit_info = f"\n\n📊 Сьогодні засвоєно: **{daily_count}/5** уроків."
-    
+
     # Виправляємо помилку MESSAGE_TOO_LONG
     final_text = full_text + limit_info
     if len(final_text) > 4000:
-        final_text = final_text[:3990] + "...\n\n*(Текст скорочено через ліміти Telegram)*"
+        final_text = (
+            final_text[:3990] + "...\n\n*(Текст скорочено через ліміти Telegram)*"
+        )
 
     kb = InlineKeyboardBuilder()
-    
+
     # --- ЛОГІКА КНОПКИ "НАСТУПНИЙ" ---
     # Якщо ліміт вичерпано і стаття ще не читана, кнопка веде на відпочинок
     if daily_count >= 5 and not is_read:
@@ -263,23 +291,28 @@ async def render_article(callback: types.CallbackQuery, article, user_id):
     if is_read:
         kb.button(text="🌟 Вже вивчено", callback_data="academy_already_done")
     else:
-        kb.button(text="Зарахувати урок (+1 бал)", callback_data=f"academy_read_{article['id']}")
-        
-    kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
+        kb.button(
+            text="Зарахувати урок (+1 бал)",
+            callback_data=f"academy_read_{article['id']}",
+        )
+
+    kb.button(
+        text="⬅️ Минулий",
+        callback_data=f"academy_nav_prev_{article['day']}_{article['month']}",
+    )
     kb.button(text=next_text, callback_data=next_callback)
-    
+
     kb.button(text="🔙 В меню", callback_data="back_home")
     kb.button(text="📚 Бібліотека", callback_data="library_page_0")
     kb.adjust(1, 2, 2)
-    
+
     try:
         await callback.message.edit_text(
-            final_text, 
-            reply_markup=kb.as_markup(), 
-            parse_mode="Markdown"
+            final_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
         )
     except Exception:
         pass
+
 
 @dp.callback_query(F.data == "mode_academy")
 async def show_academy_article(callback: types.CallbackQuery):
@@ -288,8 +321,11 @@ async def show_academy_article(callback: types.CallbackQuery):
     if article:
         await render_article(callback, article, callback.from_user.id)
     else:
-        await callback.answer("Сьогоднішня сторінка Академії ще пуста.", show_alert=True)
+        await callback.answer(
+            "Сьогоднішня сторінка Академії ще пуста.", show_alert=True
+        )
     await callback.answer()
+
 
 @dp.callback_query(F.data.startswith("academy_nav_"))
 async def navigate_academy(callback: types.CallbackQuery):
@@ -299,6 +335,7 @@ async def navigate_academy(callback: types.CallbackQuery):
     current_month = int(parts[4])
 
     from datetime import date, timedelta
+
     # Використовуємо 2024 рік для коректної роботи календаря
     try:
         current_date = date(2024, current_month, current_day)
@@ -306,7 +343,7 @@ async def navigate_academy(callback: types.CallbackQuery):
             new_date = current_date + timedelta(days=1)
         else:
             new_date = current_date - timedelta(days=1)
-        
+
         new_day, new_month = new_date.day, new_date.month
         article = await db.get_article_by_date(new_day, new_month)
 
@@ -319,9 +356,13 @@ async def navigate_academy(callback: types.CallbackQuery):
         await callback.answer("Помилка навігації.")
     await callback.answer()
 
+
 @dp.callback_query(F.data == "academy_already_done")
 async def handle_already_read(callback: types.CallbackQuery):
-    await callback.answer("Ти вже засвоїв цей урок! Мудрість назавжди з тобою. 🤝", show_alert=False)
+    await callback.answer(
+        "Ти вже засвоїв цей урок! Мудрість назавжди з тобою. 🤝", show_alert=False
+    )
+
 
 @dp.callback_query(F.data == "academy_limit_reached")
 async def handle_limit_reached_nav(callback: types.CallbackQuery):
@@ -333,11 +374,12 @@ async def handle_limit_reached_nav(callback: types.CallbackQuery):
     )
     await callback.answer(text, show_alert=True)
 
+
 @dp.callback_query(F.data.startswith("academy_read_"))
 async def handle_read_article(callback: types.CallbackQuery):
     article_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
-    
+
     daily_count = await db.get_daily_academy_count(user_id)
     if daily_count >= 5:
         # Використовуємо той самий лояльний текст
@@ -346,34 +388,36 @@ async def handle_read_article(callback: types.CallbackQuery):
 
     is_new = await db.mark_article_as_read(user_id, article_id)
     article = await db.get_article_by_id(article_id)
-    
+
     if article:
         # Отримуємо оновлені дані після запису
         new_count, rank = await db.get_academy_progress(user_id)
         new_daily = await db.get_daily_academy_count(user_id)
-        
+
         await render_article(callback, article, user_id)
-        
+
         if is_new:
             # ДЕТАЛЬНИЙ АЛЕРТ ІЗ ЗАГАЛЬНОЮ КІЛЬКІСТЮ
             await callback.answer(
                 f"🎉 Урок зараховано!\n\n"
                 f"📚 Всього вивчено: {new_count}\n"
                 f"📊 За сьогодні: {new_daily}/5\n"
-                f"🎓 Твій клас: {rank}", 
-                show_alert=True
+                f"🎓 Твій клас: {rank}",
+                show_alert=True,
             )
     else:
         await callback.answer("Архів: статті немає.")
-        
+
+
 # --- ЛОГІКА: БІБЛІОТЕКА (АРХІВ) ---
 
 # --- ОНОВЛЕНИЙ ХЕНДЛЕР БІБЛІОТЕКИ ---
 
+
 @dp.callback_query(F.data.startswith("library_page_"))
 async def show_library_page(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    
+
     try:
         page = int(callback.data.split("_")[2])
     except (IndexError, ValueError):
@@ -381,25 +425,27 @@ async def show_library_page(callback: types.CallbackQuery):
 
     LIMIT = 10
     offset = page * LIMIT
-    
+
     # Дістаємо дані з бази
     articles = await db.get_user_library(user_id, limit=LIMIT, offset=offset)
     total_count = await db.count_user_library(user_id)
-    
+
     import math
+
     total_pages = math.ceil(total_count / LIMIT)
-    if total_pages == 0: total_pages = 1
+    if total_pages == 0:
+        total_pages = 1
 
     if not articles:
         kb = InlineKeyboardBuilder()
         kb.button(text="🔙 В Академію", callback_data="mode_academy")
-        
+
         # Спроба відредагувати текст (якщо бот "прокинувся" після лагу)
         try:
             await callback.message.edit_text(
-                "📚 **Моя Бібліотека**\n\nТут поки що пусто. Вивчи свій перший урок!", 
+                "📚 **Моя Бібліотека**\n\nТут поки що пусто. Вивчи свій перший урок!",
                 reply_markup=kb.as_markup(),
-                parse_mode="Markdown"
+                parse_mode="Markdown",
             )
         except Exception:
             pass
@@ -416,26 +462,38 @@ async def show_library_page(callback: types.CallbackQuery):
         f"Всього записів: **{total_count}**\n\n"
         f"👇 *Натисни, щоб відкрити:*",
     )
-    
+
     kb = InlineKeyboardBuilder()
-    
+
     for art in articles:
-        title = art['title']
-        if len(title) > 25: 
+        title = art["title"]
+        if len(title) > 25:
             title = title[:23] + ".."
-            
+
         btn_text = f"📜 {art['day']:02d}.{art['month']:02d} | {title}"
-        kb.row(InlineKeyboardButton(text=btn_text, callback_data=f"library_open_{art['id']}"))
+        kb.row(
+            InlineKeyboardButton(
+                text=btn_text, callback_data=f"library_open_{art['id']}"
+            )
+        )
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Туди", callback_data=f"library_page_{page - 1}"))
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️ Туди", callback_data=f"library_page_{page - 1}"
+            )
+        )
     if total_count > offset + LIMIT:
-        nav_buttons.append(InlineKeyboardButton(text="Сюди ➡️", callback_data=f"library_page_{page + 1}"))
-    
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="Сюди ➡️", callback_data=f"library_page_{page + 1}"
+            )
+        )
+
     if nav_buttons:
         kb.row(*nav_buttons)
-    
+
     kb.row(InlineKeyboardButton(text="🔙 В Академію", callback_data="mode_academy"))
 
     final_text = text[0] if isinstance(text, tuple) else text
@@ -445,9 +503,7 @@ async def show_library_page(callback: types.CallbackQuery):
     # 1. Редагуємо список сторінок
     try:
         await callback.message.edit_text(
-            final_text, 
-            reply_markup=kb.as_markup(), 
-            parse_mode="Markdown"
+            final_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
         )
     except Exception as e:
         logging.error(f"Помилка оновлення сторінки бібліотеки: {e}")
@@ -458,6 +514,7 @@ async def show_library_page(callback: types.CallbackQuery):
     except TelegramBadRequest:
         # Це саме те місце, де виникала помилка "query is too old"
         logging.info("Запит сторінки бібліотеки застарів, ігноруємо.")
+
 
 @dp.callback_query(F.data.startswith("library_open_"))
 async def open_archived_article(callback: types.CallbackQuery):
@@ -475,15 +532,19 @@ async def open_archived_article(callback: types.CallbackQuery):
     else:
         await callback.answer("Статтю не знайдено.")
 
+
 # --- ЛОГІКА: ОРАКУЛ (ЦИТАТИ) ---
+
 
 @dp.callback_query(F.data == "mode_quotes")
 async def start_quotes(callback: types.CallbackQuery):
     await send_random_quote(callback)
 
+
 @dp.callback_query(F.data == "refresh_quote")
 async def refresh_quote(callback: types.CallbackQuery):
     await send_random_quote(callback)
+
 
 async def send_random_quote(callback: types.CallbackQuery):
     quote = random.choice(STOIC_DB)
@@ -495,10 +556,10 @@ async def send_random_quote(callback: types.CallbackQuery):
             text, reply_markup=get_quote_keyboard(), parse_mode="Markdown"
         )
     except Exception as e:
-        # Найчастіша помилка тут — "Message is not modified", 
+        # Найчастіша помилка тут — "Message is not modified",
         # якщо рандом вибрав ту саму цитату, що вже на екрані.
         logging.info(f"Помилка оновлення цитати: {e}")
-        
+
         # Можна вивести маленьке сповіщення юзеру, якщо хочеш
         try:
             await callback.answer("Випала та сама цитата. Спробуй ще раз! 🔄")
@@ -514,6 +575,7 @@ async def send_random_quote(callback: types.CallbackQuery):
 
 
 # --- ЛОГІКА: MEMENTO MORI (ТАЙМЕР ЖИТТЯ) ---
+
 
 def generate_memento_text(birth_date: datetime):
     """Генерує текст таймера життя на основі дати."""
@@ -549,11 +611,11 @@ async def reset_memento_date(callback: types.CallbackQuery, state: FSMContext):
     # Додаємо кнопку скасування, щоб не застрягти
     kb = InlineKeyboardBuilder()
     kb.button(text="🔙 Скасувати", callback_data="back_home")
-    
+
     # Додано try/except для безпечного редагування тексту
     try:
         await callback.message.edit_text(
-            "🔄 **Зміна дати**\n\n" 
+            "🔄 **Зміна дати**\n\n"
             "Введи нову дату народження (наприклад: `24.08.1991`) або просто рік:",
             reply_markup=kb.as_markup(),
             parse_mode="Markdown",
@@ -585,18 +647,20 @@ async def start_memento(callback: types.CallbackQuery, state: FSMContext):
         kb = InlineKeyboardBuilder()
         kb.button(text="🔄 Змінити дату", callback_data="reset_memento")
         kb.button(text="🔙 В меню", callback_data="back_home")
-        kb.adjust(1) # Кнопки одна під одною
+        kb.adjust(1)  # Кнопки одна під одною
 
         # Додано try/except для редагування тексту
         try:
-            await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+            await callback.message.edit_text(
+                text, reply_markup=kb.as_markup(), parse_mode="Markdown"
+            )
         except Exception:
             pass
     else:
         # --- ВАРІАНТ 2: ДАТИ НЕМАЄ (ПЕРШИЙ ВХІД) ---
         kb = InlineKeyboardBuilder()
         kb.button(text="🔙 Назад в меню", callback_data="back_home")
-        
+
         # Додано try/except для редагування тексту
         try:
             await callback.message.edit_text(
@@ -618,11 +682,12 @@ async def start_memento(callback: types.CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         logging.info("Запит Memento Mori застарів")
 
+
 @dp.message(MementoMori.waiting_for_birthdate)
 async def process_birthdate(message: types.Message, state: FSMContext):
     date_text = message.text.strip()
     birth_date = None
-    
+
     # Кнопка "Скасувати" на випадок помилки
     kb_error = InlineKeyboardBuilder()
     kb_error.button(text="🔙 Скасувати", callback_data="back_home")
@@ -639,7 +704,7 @@ async def process_birthdate(message: types.Message, state: FSMContext):
                 "⚠️ **Невірний формат.**\n"
                 "Спробуй ще раз: `24.08.1998` або просто `1998`.",
                 reply_markup=kb_error.as_markup(),
-                parse_mode="Markdown"
+                parse_mode="Markdown",
             )
             return
 
@@ -648,15 +713,15 @@ async def process_birthdate(message: types.Message, state: FSMContext):
     if birth_date > datetime.now():
         await message.answer(
             "🔮 Ти з майбутнього? Введи дату народження з минулого.",
-            reply_markup=kb_error.as_markup()
+            reply_markup=kb_error.as_markup(),
         )
         return
-    
+
     # 2. Перевірка на реалістичність (наприклад, > 110 років)
     if (datetime.now().year - birth_date.year) > 110:
         await message.answer(
             "🐢 Ого, ти бачив динозаврів? Давай введемо реальну дату.",
-            reply_markup=kb_error.as_markup()
+            reply_markup=kb_error.as_markup(),
         )
         return
 
@@ -671,7 +736,9 @@ async def process_birthdate(message: types.Message, state: FSMContext):
     kb.button(text="🔙 В меню", callback_data="back_home")
     kb.adjust(1)
 
-    await message.answer(result_text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    await message.answer(
+        result_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
+    )
     await state.clear()
 
 
@@ -833,6 +900,28 @@ async def view_journal(callback: types.CallbackQuery):
         ]
     )
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+
+# --- ФУНКЦІЯ: ГЕНЕРАЦІЯ КОДУ СИНХРОНІЗАЦІЇ  ТГ акка з додатком ---
+async def generate_sync_code(user_id):
+    """Генерує 6-значний код і зберігає в БД на 10 хвилин"""
+    code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+    async with db.pool.acquire() as conn:
+        # Видаляємо старі коди цього юзера
+        await conn.execute("DELETE FROM sync_codes WHERE user_id = $1", user_id)
+        # Записуємо новий код
+        await conn.execute(
+            "INSERT INTO sync_codes (code, user_id) VALUES ($1, $2)", code, user_id
+        )
+    return code
+
+
+async def clear_expired_codes():
+    async with db.pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM sync_codes WHERE expires_at < CURRENT_TIMESTAMP"
+        )
+        logging.info("🧹 Старі коди синхронізації видалено.")
 
 
 # --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
@@ -1062,9 +1151,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
             # 2. Спроба оновити екран результату
             try:
                 await callback.message.edit_text(
-                    msg_text,
-                    reply_markup=kb.as_markup(),
-                    parse_mode="Markdown"
+                    msg_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
                 )
             except Exception as e:
                 # Наприклад, якщо користувач натиснув двічі дуже швидко
@@ -1166,7 +1253,11 @@ async def main():
     # 2. ПЛАНУВАЛЬНИК (SCHEDULER)
     scheduler = AsyncIOScheduler()
     # 07:30 UTC = 09:30 за Києвом
-    scheduler.add_job(send_daily_quote, trigger="cron", hour=7, minute=30, kwargs={"bot": bot})
+    scheduler.add_job(
+        send_daily_quote, trigger="cron", hour=7, minute=30, kwargs={"bot": bot}
+    )
+    # очистка старих кодів синхронізації кожну годину
+    scheduler.add_job(clear_expired_codes, "interval", hours=1)
     scheduler.start()
 
     # 3. ЗАПУСК БОТА (Видаляємо зайві коментарі, просто запускаємо)

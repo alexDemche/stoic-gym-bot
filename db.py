@@ -49,9 +49,10 @@ class Database:
                 )
             """
             )
-            
+
             # 3. НОВА: Таблиця історії Ментора
-            await conn.execute("""
+            await conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS mentor_history (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT,
@@ -60,7 +61,8 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     CONSTRAINT fk_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
-            """)
+            """
+            )
 
             # 4. Таблиця історії ігор (для щоденного звіту)
             await conn.execute(
@@ -71,6 +73,18 @@ class Database:
                     level_num INTEGER,
                     points_earned INTEGER,
                     played_at DATE DEFAULT CURRENT_DATE
+                )
+            """
+            )
+
+            # Цинхронізація прогресу в тг боті з додатком при онбордінгу в додатку
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sync_codes (
+                    code VARCHAR(6) PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '10 minutes'),
+                    CONSTRAINT fk_sync_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             """
             )
@@ -98,16 +112,14 @@ class Database:
                 username,
             )
 
-        
     async def get_stats(self, user_id):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT score, level, username FROM users WHERE user_id = $1", 
-                user_id
+                "SELECT score, level, username FROM users WHERE user_id = $1", user_id
             )
             if row:
                 # Повертаємо score, level та ім'я
-                return row['score'], row['level'], row['username']
+                return row["score"], row["level"], row["username"]
             return 0, 1, "Мандрівник"
 
     async def update_game_progress(self, user_id, score, level):
@@ -123,10 +135,10 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 # Додаємо user_id на початку
-                "SELECT user_id, username, score FROM users ORDER BY score DESC LIMIT $1", 
-                limit
+                "SELECT user_id, username, score FROM users ORDER BY score DESC LIMIT $1",
+                limit,
             )
-            
+
     async def get_user_position(self, user_id):
         async with self.pool.acquire() as conn:
             # Рахуємо, скільки людей мають більше балів, ніж цей користувач
@@ -235,14 +247,12 @@ class Database:
                 user_id,
                 limit,
             )
-            
+
     async def delete_journal_entry(self, user_id, entry_id):
         """Видаляє запис щоденника, перевіряючи власника"""
         async with self.pool.acquire() as conn:
             await conn.execute(
-                "DELETE FROM journal WHERE id = $1 AND user_id = $2",
-                entry_id,
-                user_id
+                "DELETE FROM journal WHERE id = $1 AND user_id = $2", entry_id, user_id
             )
 
     # --- ІСТОРІЯ ІГОР (GAME HISTORY) ---
@@ -416,7 +426,8 @@ class Database:
         async with self.pool.acquire() as conn:
             exists = await conn.fetchval(
                 "SELECT 1 FROM user_academy_progress WHERE user_id = $1 AND article_id = $2",
-                user_id, article_id
+                user_id,
+                article_id,
             )
             return bool(exists)
 
@@ -428,18 +439,17 @@ class Database:
                 SELECT COUNT(*) FROM user_academy_progress 
                 WHERE user_id = $1 AND read_at::date = CURRENT_DATE
                 """,
-                user_id
+                user_id,
             )
 
     async def get_article_by_id(self, article_id):
         """Отримує статтю за її унікальним ID"""
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(  
-                "SELECT * FROM academy_articles WHERE id = $1", 
-                article_id
+            row = await conn.fetchrow(
+                "SELECT * FROM academy_articles WHERE id = $1", article_id
             )
             return dict(row) if row else None
-        
+
     async def get_user_library(self, user_id, limit=5, offset=0):
         """Повертає список вивчених статей з пагінацією"""
         async with self.pool.acquire() as conn:
@@ -452,7 +462,9 @@ class Database:
                 ORDER BY u.read_at DESC
                 LIMIT $2 OFFSET $3
                 """,
-                user_id, limit, offset
+                user_id,
+                limit,
+                offset,
             )
             return [dict(row) for row in rows]
 
@@ -460,31 +472,35 @@ class Database:
         """Рахує загальну кількість вивчених статей"""
         async with self.pool.acquire() as conn:
             return await conn.fetchval(
-                "SELECT COUNT(*) FROM user_academy_progress WHERE user_id = $1", 
-                user_id
+                "SELECT COUNT(*) FROM user_academy_progress WHERE user_id = $1", user_id
             )
-            
+
     # --- НОВІ ТАБЛИЦІ ДЛЯ ЦИТАТ ТА ГРИ ---
     async def create_content_tables(self):
         async with self.pool.acquire() as conn:
             # Таблиця цитат
-            await conn.execute("""
+            await conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS quotes (
                     id SERIAL PRIMARY KEY,
                     text TEXT NOT NULL,
                     author TEXT,
                     category TEXT
                 )
-            """)
+            """
+            )
             # Таблиця сценаріїв Gym
-            await conn.execute("""
+            await conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS scenarios (
                     id SERIAL PRIMARY KEY,
                     text TEXT NOT NULL
                 )
-            """)
+            """
+            )
             # Таблиця варіантів відповідей
-            await conn.execute("""
+            await conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS scenario_options (
                     id SERIAL PRIMARY KEY,
                     scenario_id INTEGER REFERENCES scenarios(id),
@@ -493,59 +509,70 @@ class Database:
                     score INTEGER,
                     msg TEXT
                 )
-            """)
+            """
+            )
 
     async def get_random_quote(self):
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT text, author, category FROM quotes ORDER BY RANDOM() LIMIT 1")
+            row = await conn.fetchrow(
+                "SELECT text, author, category FROM quotes ORDER BY RANDOM() LIMIT 1"
+            )
             return dict(row) if row else None
 
     async def get_scenario_by_level(self, level: int):
         async with self.pool.acquire() as conn:
             # 1. Отримуємо текст сценарію
-            scenario = await conn.fetchrow("SELECT id, text FROM scenarios WHERE id = $1", level)
-            if not scenario: 
+            scenario = await conn.fetchrow(
+                "SELECT id, text FROM scenarios WHERE id = $1", level
+            )
+            if not scenario:
                 return None
-                
+
             # 2. Отримуємо варіанти відповідей
             options = await conn.fetch(
-                "SELECT option_id as id, text, score, msg FROM scenario_options WHERE scenario_id = $1", 
-                scenario['id']
+                "SELECT option_id as id, text, score, msg FROM scenario_options WHERE scenario_id = $1",
+                scenario["id"],
             )
-            
+
             return {
-                "id": scenario['id'],
-                "text": scenario['text'],
-                "options": [dict(opt) for opt in options]
+                "id": scenario["id"],
+                "text": scenario["text"],
+                "options": [dict(opt) for opt in options],
             }
-    
+
     # ШІ Ментор
     async def save_mentor_message(self, user_id, role, content):
         async with self.pool.acquire() as conn:
             try:
                 # 1. Конвертуємо в int, щоб asyncpg не видав помилку типу
                 safe_user_id = int(user_id)
-                
+
                 await conn.execute(
                     """
                     INSERT INTO mentor_history (user_id, role, content) 
                     VALUES ($1, $2, $3)
                     """,
-                    safe_user_id, role, content
+                    safe_user_id,
+                    role,
+                    content,
                 )
             except Exception as e:
                 # Це покаже нам в логах Railway, ЧОМУ саме не вдалося зберегти
                 print(f"❌ DATABASE ERROR [save_mentor_message]: {e}")
-                
-                # Якщо помилка через Foreign Key (юзера нема в базі), 
+
+                # Якщо помилка через Foreign Key (юзера нема в базі),
                 # ми можемо спробувати створити його "на льоту"
                 if "fk_user" in str(e).lower() or "foreign key" in str(e).lower():
-                    print(f"⚠️ Юзера {user_id} не знайдено в таблиці users. Створюємо...")
+                    print(
+                        f"⚠️ Юзера {user_id} не знайдено в таблиці users. Створюємо..."
+                    )
                     await self.add_user(safe_user_id, "Мандрівник")
                     # Пробуємо ще раз після створення юзера
                     await conn.execute(
                         "INSERT INTO mentor_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        safe_user_id, role, content
+                        safe_user_id,
+                        role,
+                        content,
                     )
 
     async def get_mentor_history(self, user_id, limit=50):
@@ -558,5 +585,6 @@ class Database:
                 ORDER BY created_at DESC 
                 LIMIT $2
                 """,
-                user_id, limit
+                user_id,
+                limit,
             )
