@@ -122,7 +122,9 @@ class Database:
     async def get_top_users(self, limit=10):
         async with self.pool.acquire() as conn:
             return await conn.fetch(
-                "SELECT username, score FROM users ORDER BY score DESC LIMIT $1", limit
+                # Додаємо user_id на початку
+                "SELECT user_id, username, score FROM users ORDER BY score DESC LIMIT $1", 
+                limit
             )
             
     async def get_user_position(self, user_id):
