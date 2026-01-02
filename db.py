@@ -78,16 +78,14 @@ class Database:
             )
 
             # Цинхронізація прогресу в тг боті з додатком при онбордінгу в додатку
-            await conn.execute(
-                """
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS sync_codes (
                     code VARCHAR(6) PRIMARY KEY,
                     user_id BIGINT NOT NULL,
-                    expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL '10 minutes'),
+                    expires_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (now() AT TIME ZONE 'utc' + INTERVAL '10 minutes'),
                     CONSTRAINT fk_sync_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
-            """
-            )
+            """)
 
             # МІГРАЦІЇ: Додаємо колонки для старих користувачів (якщо їх немає)
             try:
