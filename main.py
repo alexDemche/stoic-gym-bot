@@ -734,7 +734,7 @@ async def show_leaderboard(callback: types.CallbackQuery):
     if not top_users:
         text += "Поки що ніхто не набрав балів. Будь першим!"
     else:
-        for i, (name, score) in enumerate(top_users, start=1):
+        for i, (uid, name, score) in enumerate(top_users, start=1):
             # Медальки для перших трьох
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
 
