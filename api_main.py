@@ -382,6 +382,26 @@ async def sync_with_code(data: dict):
             "user_data": user_data 
         }
 
+# --- СТВОРЕННЯ ГОСТЬОВОГО АККАУНТУ ---   
+class GuestRequest(BaseModel):
+    user_id: int
+    username: str
+    birthdate: str
+
+@api_router.post("/auth/create_guest")
+async def create_guest(req: GuestRequest):
+    try:
+        # Перетворюємо рядок "1991-01-01" у об'єкт дати Python
+        b_date = datetime.strptime(req.birthdate, '%Y-%m-%d').date()
+        
+        # Викликаємо оновлену функцію з ТРЬОМА аргументами
+        await db.add_user(req.user_id, req.username, b_date)
+        
+        return {"status": "success"}
+    except Exception as e:
+        print(f"❌ Error creating guest: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
 app.include_router(api_router)

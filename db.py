@@ -98,16 +98,20 @@ class Database:
             except Exception as e:
                 print(f"Migration log: {e}")
 
-    async def add_user(self, user_id, username):
+    # db.py
+    async def add_user(self, user_id, username, birthdate=None):
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO users (user_id, username)
-                VALUES ($1, $2)
-                ON CONFLICT (user_id) DO UPDATE SET username = $2
-            """,
+                INSERT INTO users (user_id, username, birthdate)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (user_id) DO UPDATE 
+                SET username = $2, 
+                    birthdate = COALESCE($3, users.birthdate)
+                """,
                 user_id,
                 username,
+                birthdate,
             )
 
     async def get_stats(self, user_id):
