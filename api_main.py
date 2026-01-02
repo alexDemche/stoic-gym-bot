@@ -346,9 +346,11 @@ async def mentor_chat(data: dict):
 @api_router.post("/auth/sync")
 async def sync_with_code(data: dict):
     code = data.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="Код відсутній")
+
     async with db.pool.acquire() as conn:
-        # 1. Перевіряємо та видаляємо код в одному запиті
-        # ВАЖЛИВО: RETURNING повертає дані, які нам потрібні
+        # 1. Видаляємо та отримуємо user_id
         row = await conn.fetchrow("""
             DELETE FROM sync_codes 
             WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc')
@@ -356,17 +358,18 @@ async def sync_with_code(data: dict):
         """, code)
         
         if not row:
-            # Якщо коду немає або він протермінований — повертаємо 401
             raise HTTPException(status_code=401, detail="Код недійсний або застарів")
         
-        # 2. Отримуємо дані користувача за ID
+        # 2. Отримуємо дані (тепер метод існує!)
         user_data = await db.get_full_user_data(row['user_id'])
         
-        # 3. ПОВЕРТАЄМО ЧИСТИЙ DICT (FastAPI сам зробить з нього JSON)
+        if not user_data:
+            raise HTTPException(status_code=404, detail="Користувача не знайдено в базі")
+        
         return {
             "status": "success", 
             "user_id": int(row['user_id']), 
-            "user_data": dict(user_data) # Переконайся, що це dict!
+            "user_data": user_data # user_data вже є словником
         }
 
 

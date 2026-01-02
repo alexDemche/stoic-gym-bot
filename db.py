@@ -171,6 +171,27 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("SELECT user_id FROM users")
             return [row["user_id"] for row in rows]
+        
+    async def get_full_user_data(self, user_id):
+        """Отримує всі дані користувача одним об'єктом для синхронізації"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT user_id, username, score, level, birthdate, energy 
+                FROM users WHERE user_id = $1
+                """, user_id
+            )
+            if row:
+                # Конвертуємо Record у звичайний dict
+                data = dict(row)
+                # Додаємо текстовий ранг, який ти використовуєш
+                from utils import get_stoic_rank
+                data['rank'] = get_stoic_rank(data['score'])
+                # Перетворюємо дату у рядок, щоб JSON не ламався
+                if data['birthdate']:
+                    data['birthdate'] = data['birthdate'].isoformat()
+                return data
+            return None
 
     # --- ЕНЕРГІЯ ---
 
