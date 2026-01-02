@@ -347,21 +347,27 @@ async def mentor_chat(data: dict):
 async def sync_with_code(data: dict):
     code = data.get("code")
     async with db.pool.acquire() as conn:
-        # Використовуємо AT TIME ZONE 'utc' для порівняння
+        # 1. Перевіряємо та видаляємо код в одному запиті
+        # ВАЖЛИВО: RETURNING повертає дані, які нам потрібні
         row = await conn.fetchrow("""
-            SELECT user_id FROM sync_codes 
-            WHERE code = $1 
-            AND expires_at > (now() AT TIME ZONE 'utc')
+            DELETE FROM sync_codes 
+            WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc')
+            RETURNING user_id
         """, code)
         
         if not row:
+            # Якщо коду немає або він протермінований — повертаємо 401
             raise HTTPException(status_code=401, detail="Код недійсний або застарів")
         
-        # Видаляємо код після успішного знаходження
-        await conn.execute("DELETE FROM sync_codes WHERE code = $1", code)
-        
+        # 2. Отримуємо дані користувача за ID
         user_data = await db.get_full_user_data(row['user_id'])
-        return {"status": "success", "user_id": row['user_id'], "user_data": user_data}
+        
+        # 3. ПОВЕРТАЄМО ЧИСТИЙ DICT (FastAPI сам зробить з нього JSON)
+        return {
+            "status": "success", 
+            "user_id": int(row['user_id']), 
+            "user_data": dict(user_data) # Переконайся, що це dict!
+        }
 
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
