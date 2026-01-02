@@ -172,16 +172,15 @@ async def complete_lesson(req: AcademyReadRequest):
 @api_router.get("/leaderboard")
 async def get_leaderboard(limit: int = 20):
     # Отримуємо топ користувачів через існуючий метод у db.py
-    # Припускаємо, що він повертає список словників: [{'username': '...', 'score': ...}, ...]
     users = await db.get_top_users(limit)
     
-    # Додаємо кожному користувачу його текстове звання
     leaderboard = []
     for user in users:
         leaderboard.append({
-            "username": user['username'],
-            "score": user['score'],
-            "rank_name": get_stoic_rank(user['score'])
+            "user_id": user.get('user_id'), # Додаємо ID з бази
+            "username": user.get('username') or user.get('name') or "Мандрівник",
+            "score": user.get('score', 0),
+            "rank_name": get_stoic_rank(user.get('score', 0))
         })
     return leaderboard
 
