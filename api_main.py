@@ -1,5 +1,5 @@
 import os
-
+from datetime import datetime, timezone
 import uvicorn
 from fastapi import (APIRouter, Depends, FastAPI, Header,  # Додали APIRouter
                      HTTPException)
@@ -346,34 +346,22 @@ async def mentor_chat(data: dict):
 @api_router.post("/auth/sync")
 async def sync_with_code(data: dict):
     code = data.get("code")
-    if not code or len(code) != 6:
-        raise HTTPException(status_code=400, detail="Некоректний код")
-
     async with db.pool.acquire() as conn:
-        # 1. Знаходимо код і перевіряємо час життя одним запитом
-        row = await conn.fetchrow(
-            """
-            DELETE FROM sync_codes 
-            WHERE code = $1 AND expires_at > CURRENT_TIMESTAMP
-            RETURNING user_id
-        """,
-            code,
-        )
-
-        # DELETE ... RETURNING — це атомарна операція в PostgreSQL.
-        # Вона видаляє рядок і ПОВЕРТАЄ його значення ОДНОЧАСНО.
-        # Це гарантує, що код не буде використаний двічі, навіть якщо прийдуть два запити в одну мілісекунду.
-
+        # Використовуємо AT TIME ZONE 'utc' для порівняння
+        row = await conn.fetchrow("""
+            SELECT user_id FROM sync_codes 
+            WHERE code = $1 
+            AND expires_at > (now() AT TIME ZONE 'utc')
+        """, code)
+        
         if not row:
-            # Тут можна додати логіку підрахунку невдалих спроб для IP
             raise HTTPException(status_code=401, detail="Код недійсний або застарів")
-
-        user_id = row["user_id"]
-
-        # 2. Отримуємо повні дані
-        user_data = await db.get_full_user_data(user_id)
-
-        return {"status": "success", "user_id": user_id, "user_data": user_data}
+        
+        # Видаляємо код після успішного знаходження
+        await conn.execute("DELETE FROM sync_codes WHERE code = $1", code)
+        
+        user_data = await db.get_full_user_data(row['user_id'])
+        return {"status": "success", "user_id": row['user_id'], "user_data": user_data}
 
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
