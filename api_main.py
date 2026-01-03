@@ -1,4 +1,5 @@
 import os
+import random
 from datetime import datetime, timezone
 import uvicorn
 from fastapi import (APIRouter, Depends, FastAPI, Header,  # Додали APIRouter
