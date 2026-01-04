@@ -6,6 +6,7 @@ from datetime import datetime
 from urllib.parse import quote
 
 from aiogram import Bot, Dispatcher, F, types
+from aiogram import html
 from aiogram.client.session.aiohttp import AiohttpSession  # Для таймаутів
 from aiogram.exceptions import TelegramBadRequest  # Для обробки помилок
 from aiogram.filters import Command
@@ -796,7 +797,8 @@ async def start_game_from_button(callback: types.CallbackQuery):
 async def show_leaderboard(callback: types.CallbackQuery):
     top_users = await db.get_top_users(10)
 
-    text = "🏆 **Алея Слави Стоїків**\n\n"
+    # В HTML замість ** використовуємо <b>
+    text = f"🏆 <b>Алея Слави Стоїків</b>\n\n"
 
     if not top_users:
         text += "Поки що ніхто не набрав балів. Будь першим!"
@@ -805,16 +807,18 @@ async def show_leaderboard(callback: types.CallbackQuery):
             # Медальки для перших трьох
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
 
-            # визначення рангу
-            rank_emoji = get_stoic_rank(score).split()[
-                0
-            ]  # Беремо тільки смайлик (👶, 🦉 тощо)
+            # Визначення рангу
+            rank_emoji = get_stoic_rank(score).split()[0]
 
-            # Якщо ім'я немає в базі (старі юзери), пишемо "Невідомий Стоїк"
-            safe_name = name if name else "Невідомий Стоїк"
+            # Екрануємо ім'я, щоб символи < > & не ламали HTML
+            if name:
+                safe_name = html.quote(name)
+            else:
+                safe_name = "Невідомий Стоїк"
 
-            # Формат: 🥇 1. Ім'я (🦉) — 350 балів
-            text += f"{medal} {i}. **{safe_name}** ({rank_emoji}) — {score}\n"
+            # Формат: 🥇 1. <b>Ім'я</b> (🦉) — 350
+            # Використовуємо <b> замість **
+            text += f"{medal} {i}. <b>{safe_name}</b> ({rank_emoji}) — {score}\n"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -822,7 +826,13 @@ async def show_leaderboard(callback: types.CallbackQuery):
         ]
     )
 
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        # Якщо все одно якась помилка, відправимо хоча б без форматування, щоб бот не вмирав
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode=None)
+        print(f"Error in leaderboard: {e}")
+        
     await callback.answer()
 
 
