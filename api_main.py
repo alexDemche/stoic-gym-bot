@@ -1,10 +1,12 @@
 import os
 import random
 from datetime import datetime, timezone
+
 import uvicorn
-from fastapi import (APIRouter, Depends, FastAPI, Header,  # Додали APIRouter
-                     HTTPException)
+from fastapi import Header  # Додали APIRouter
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -34,6 +36,13 @@ app.add_middleware(
 
 db = Database()
 
+if not os.path.exists("static"):
+    os.makedirs("static")
+
+# 🏛️ МОНТУЄМО ПАПКУ STATIC
+# Тепер все, що в папці static, буде доступне за адресою /static
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # --- СТВОРЮЄМО РОУТЕР З ПРЕФІКСОМ /api ---
 api_router = APIRouter(prefix="/api")
 
@@ -50,7 +59,8 @@ class AcademyArticle(BaseModel):
 class AcademyReadRequest(BaseModel):
     user_id: int
     article_id: int
-    
+
+
 class LabComplete(BaseModel):
     user_id: int
     practice_type: str
@@ -357,77 +367,79 @@ async def sync_with_code(data: dict):
 
     async with db.pool.acquire() as conn:
         # 1. Видаляємо код та отримуємо ID користувача
-        row = await conn.fetchrow("""
+        row = await conn.fetchrow(
+            """
             DELETE FROM sync_codes 
             WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc')
             RETURNING user_id
-        """, code)
-        
+        """,
+            code,
+        )
+
         if not row:
             raise HTTPException(status_code=401, detail="Код недійсний або застарів")
-        
-        user_id = row['user_id']
-        
+
+        user_id = row["user_id"]
+
         # 2. Отримуємо базові дані (score, level, birthdate, energy)
         user_data = await db.get_full_user_data(user_id)
-        
+
         if not user_data:
             raise HTTPException(status_code=404, detail="Користувача не знайдено")
 
         # 3. ДОДАЄМО ДАНІ АКАДЕМІЇ
         # Викликаємо метод з db.py
         academy_count, academy_rank = await db.get_academy_progress(user_id)
-        
-        # Записуємо їх прямо в словник user_data
-        user_data['academy_total'] = academy_count
-        user_data['academy_rank'] = academy_rank
-        
-        return {
-            "status": "success", 
-            "user_id": int(user_id), 
-            "user_data": user_data 
-        }
 
-# --- СТВОРЕННЯ ГОСТЬОВОГО АККАУНТУ ---   
+        # Записуємо їх прямо в словник user_data
+        user_data["academy_total"] = academy_count
+        user_data["academy_rank"] = academy_rank
+
+        return {"status": "success", "user_id": int(user_id), "user_data": user_data}
+
+
+# --- СТВОРЕННЯ ГОСТЬОВОГО АККАУНТУ ---
 class GuestRequest(BaseModel):
     user_id: int
     username: str
     birthdate: str
 
+
 @api_router.post("/auth/create_guest")
 async def create_guest(req: GuestRequest):
     try:
         # Перетворюємо рядок "1991-01-01" у об'єкт дати Python
-        b_date = datetime.strptime(req.birthdate, '%Y-%m-%d').date()
-        
+        b_date = datetime.strptime(req.birthdate, "%Y-%m-%d").date()
+
         # Викликаємо оновлену функцію з ТРЬОМА аргументами
         await db.add_user(req.user_id, req.username, b_date)
-        
+
         return {"status": "success"}
     except Exception as e:
         print(f"❌ Error creating guest: {e}")
         raise HTTPException(status_code=500, detail=str(e))
- 
-# --- ЛАБОРАТОРІЯ  ---   
+
+
+# --- ЛАБОРАТОРІЯ  ---
 @api_router.post("/lab/complete")
 async def complete_lab_practice(req: LabComplete):
     try:
         # Викликаємо метод БД, який ми створили вище
         new_score = await db.save_lab_practice(
-            req.user_id, 
-            req.practice_type, 
-            req.score
+            req.user_id, req.practice_type, req.score
         )
-        
+
         return {
             "status": "success",
             "practice_type": req.practice_type,
             "added_score": req.score,
-            "total_score": new_score
+            "total_score": new_score,
         }
     except Exception as e:
         print(f"❌ Error in complete_lab_practice: {e}")
-        raise HTTPException(status_code=500, detail="Не вдалося зберегти результат практики")
+        raise HTTPException(
+            status_code=500, detail="Не вдалося зберегти результат практики"
+        )
 
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
