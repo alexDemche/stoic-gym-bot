@@ -138,19 +138,41 @@ async def create_guest(req: GuestRequest):
 @api_router.post("/auth/sync")
 async def sync_with_code(req: SyncRequest):
     async with db.pool.acquire() as conn:
+        # 1. Вилучаємо код та отримуємо ID користувача (атомарна операція)
         row = await conn.fetchrow(
-            "DELETE FROM sync_codes WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc') RETURNING user_id",
+            """
+            DELETE FROM sync_codes 
+            WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc') 
+            RETURNING user_id
+            """,
             req.code
         )
+        
         if not row:
             raise HTTPException(status_code=401, detail="Код недійсний або застарів")
         
         user_id = row["user_id"]
+        
+        # 2. Отримуємо повні дані профілю (вже з правильним іменем та балами)
         user_data = await db.get_full_user_data(user_id)
+        
+        if not user_data:
+            # Якщо код був, а юзера в базі немає — це системна помилка
+            raise HTTPException(status_code=404, detail="Дані користувача не знайдено")
+        
+        # 3. Додаємо дані Академії (теорія)
         academy_count, academy_rank = await db.get_academy_progress(user_id)
+        
+        # Формуємо фінальний об'єкт для React Native
         user_data["academy_total"] = academy_count
         user_data["academy_rank"] = academy_rank
-        return {"status": "success", "user_id": int(user_id), "user_data": user_data}
+        
+        # Переконуємось, що user_id у JSON — це число (BIGINT може прийти як string)
+        return {
+            "status": "success", 
+            "user_id": int(user_id), 
+            "user_data": user_data
+        }
 
 # --- STOIC GYM ---
 
@@ -242,10 +264,18 @@ async def get_mentor_history(user_id: int):
 @api_router.post("/mentor/chat")
 async def mentor_chat(req: MentorRequest):
     try:
-        if not req.messages: return {"reply": "Я не почув твого питання."}
+        if not req.messages: 
+            return {"reply": "Я не почув твого питання."}
+        
         last_msg = req.messages[-1]["content"]
-        await db.add_user(req.user_id, "Мандрівник")
+        
+        # ❌ ВИДАЛЯЄМО ЦЕЙ РЯДОК:
+        # await db.add_user(req.user_id, "Мандрівник") 
+        
+        # Просто зберігаємо повідомлення. 
+        # Якщо юзера немає в базі, db.save_mentor_message сам це виправить (через try/except)
         await db.save_mentor_message(req.user_id, "user", last_msg)
+        
         response = await client.chat.completions.create(
             model="gpt-4o-mini", 
             messages=[{"role": "system", "content": SYSTEM_PROMPT_AI_MSG}] + req.messages, 
@@ -253,6 +283,7 @@ async def mentor_chat(req: MentorRequest):
         )
         reply = response.choices[0].message.content
         await db.save_mentor_message(req.user_id, "assistant", reply)
+        
         return {"reply": reply}
     except Exception as e:
         return {"reply": "Мій розум зараз у тумані..."}

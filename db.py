@@ -98,7 +98,7 @@ class Database:
             except Exception as e:
                 print(f"Migration log: {e}")
 
-    # db.py
+
     async def add_user(self, user_id, username, birthdate=None):
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -106,8 +106,8 @@ class Database:
                 INSERT INTO users (user_id, username, birthdate)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (user_id) DO UPDATE 
-                SET username = $2, 
-                    birthdate = COALESCE($3, users.birthdate)
+                SET username = COALESCE(users.username, EXCLUDED.username), -- Зберігаємо старе, якщо воно є
+                    birthdate = COALESCE(users.birthdate, EXCLUDED.birthdate) -- Зберігаємо дату, якщо вона є
                 """,
                 user_id,
                 username,
@@ -177,7 +177,6 @@ class Database:
             return [row["user_id"] for row in rows]
         
     async def get_full_user_data(self, user_id):
-        """Отримує всі дані користувача одним об'єктом для синхронізації"""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -186,14 +185,20 @@ class Database:
                 """, user_id
             )
             if row:
-                # Конвертуємо Record у звичайний dict
                 data = dict(row)
-                # Додаємо текстовий ранг, який ти використовуєш
+                
+                # 1. Захист від None у score
+                user_score = data.get('score') or 0
+                
                 from utils import get_stoic_rank
-                data['rank'] = get_stoic_rank(data['score'])
-                # Перетворюємо дату у рядок, щоб JSON не ламався
-                if data['birthdate']:
+                data['rank'] = get_stoic_rank(user_score)
+                
+                # 2. Переконуємось, що user_id — це точно число для фронтенду
+                data['user_id'] = int(data['user_id'])
+                
+                if data.get('birthdate'):
                     data['birthdate'] = data['birthdate'].isoformat()
+                
                 return data
             return None
 
