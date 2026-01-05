@@ -182,6 +182,7 @@ async def create_guest(req: GuestRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- ЛАБОРАТОРІЯ ---
 @api_router.post("/lab/complete")
 async def complete_lab_practice(req: LabComplete):
     new_score = await db.save_lab_practice(req.user_id, req.practice_type, req.score)
@@ -191,6 +192,79 @@ async def complete_lab_practice(req: LabComplete):
         "added_score": req.score,
         "total_score": new_score,
     }
+    
+# --- ЦИТАТИ ---
+@api_router.get("/quotes/random")
+async def get_random_quote():
+    quote = await db.get_random_quote()
+    if not quote:
+        # Дефолтна цитата, якщо база порожня
+        return {
+            "text": "Доля веде того, хто хоче, і тягне того, хто опирається.",
+            "author": "Сенека",
+            "category": "Стійкість"
+        }
+    return quote
+
+# --- Академія ---
+@api_router.get("/academy/status/{user_id}")
+async def get_academy_status(user_id: int):
+    count, rank = await db.get_academy_progress(user_id)
+    daily_count = await db.get_daily_academy_count(user_id)
+    return {
+        "total_learned": count,
+        "rank": rank,
+        "daily_count": daily_count,
+        "can_learn_more": daily_count < 5,
+    }
+
+@api_router.get("/academy/articles")
+async def get_articles(limit: int = 50, offset: int = 0):
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2",
+            limit, offset
+        )
+        return [dict(row) for row in rows]
+
+@api_router.get("/academy/articles/{article_id}")
+async def get_article_detail(article_id: int):
+    article = await db.get_article_by_id(article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Статтю не знайдено")
+    return article
+
+@api_router.post("/academy/complete")
+async def complete_lesson(req: AcademyReadRequest):
+    daily_count = await db.get_daily_academy_count(req.user_id)
+    if daily_count >= 5:
+        return {"success": False, "error": "limit_reached"}
+    is_new = await db.mark_article_as_read(req.user_id, req.article_id)
+    return {"success": True, "is_new": is_new}
+
+# --- ТАБЛИЦЯ ЛІДЕРІВ ---
+@api_router.get("/leaderboard")
+async def get_leaderboard(limit: int = 20):
+    users = await db.get_top_users(limit)
+    return [
+        {
+            "user_id": user["user_id"],
+            "username": user["username"] or "Мандрівник",
+            "score": user["score"],
+            "rank_name": get_stoic_rank(user["score"]),
+        } for user in users
+    ]
+
+# --- ЩОДЕННИК ---
+@api_router.get("/journal/history/{user_id}")
+async def get_journal_history(user_id: int, limit: int = 10):
+    entries = await db.get_journal_entries(user_id, limit)
+    return [dict(e) for e in entries]
+
+@api_router.post("/journal/save")
+async def save_journal_entry(req: JournalEntry):
+    await db.save_journal_entry(req.user_id, req.text)
+    return {"status": "success"}
 
 # Підключаємо роутер
 app.include_router(api_router)
