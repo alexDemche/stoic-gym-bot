@@ -50,6 +50,11 @@ class AcademyArticle(BaseModel):
 class AcademyReadRequest(BaseModel):
     user_id: int
     article_id: int
+    
+class LabComplete(BaseModel):
+    user_id: int
+    practice_type: str
+    score: int
 
 
 @app.on_event("startup")
