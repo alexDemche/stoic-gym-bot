@@ -295,6 +295,14 @@ async def complete_lab_practice(req: LabComplete):
     new_score = await db.save_lab_practice(req.user_id, req.practice_type, req.score)
     return {"status": "success", "added_score": req.score, "total_score": new_score}
 
+# --- Повне видалення користувача ---
+@app.delete("/api/user/{user_id}")
+async def delete_account(user_id: int):
+    success = await db.delete_user_data(user_id)
+    if success:
+        return {"status": "deleted"}
+    raise HTTPException(status_code=404, detail="User not found")
+
 app.include_router(api_router)
 
 if __name__ == "__main__":

@@ -653,3 +653,27 @@ class Database:
                 user_id,
                 limit,
             )
+      
+    # Повне видалення користувача та всіх пов'язаних даних   
+    async def delete_user_data(self, user_id: int):
+        """Повне видалення користувача та всіх пов'язаних даних (Compliance check)"""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Видаляємо дані з таблиць, де немає автоматичного CASCADE
+                await conn.execute("DELETE FROM journal WHERE user_id = $1", user_id)
+                await conn.execute("DELETE FROM game_history WHERE user_id = $1", user_id)
+                await conn.execute("DELETE FROM user_academy_progress WHERE user_id = $1", user_id)
+                
+                # 2. Таблиці mentor_history, sync_codes та lab_history 
+                # мають CONSTRAINT ... ON DELETE CASCADE, тому вони видаляться 
+                # автоматично при видаленні з таблиці users. 
+                # Але ми можемо додати їх явно для надійності:
+                await conn.execute("DELETE FROM mentor_history WHERE user_id = $1", user_id)
+                await conn.execute("DELETE FROM sync_codes WHERE user_id = $1", user_id)
+                await conn.execute("DELETE FROM lab_history WHERE user_id = $1", user_id)
+
+                # 3. Видаляємо самого користувача (головний тригер)
+                result = await conn.execute("DELETE FROM users WHERE user_id = $1", user_id)
+                
+                # Повертаємо True, якщо користувач був видалений
+                return result == "DELETE 1"
