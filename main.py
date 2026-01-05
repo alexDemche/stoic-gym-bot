@@ -1091,20 +1091,32 @@ async def reset_gym(callback: types.CallbackQuery):
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
+    # 1. РОЗПАКОВУЄМО ДАНІ З КНОПКИ (УНІВЕРСАЛЬНИЙ МЕТОД)
+    # Цей блок тепер коректно обробляє ID з підкресленнями (наприклад, lvl33_opt1)
     try:
-        _, scenario_id, choice_id = callback.data.split("_")
-        scenario_id = int(scenario_id)
+        parts = callback.data.split("_")
+        # Має бути мінімум 3 частини: anygame, scenario_id, choice_id
+        if len(parts) < 3:
+            raise ValueError
+        
+        scenario_id = int(parts[1])
+        # Збираємо choice_id назад, скільки б там не було підкреслень
+        choice_id = "_".join(parts[2:])
+        
     except ValueError:
         await callback.answer("Помилка передачі даних.")
         return
 
+    # 2. ОТРИМУЄМО СТАТИСТИКУ ТА ЕНЕРГІЮ
     current_score, current_level, _ = await db.get_stats(user_id)
-    # Перевіряємо енергію ЗАРАЗ (після того, як send_level її вже списав)
+    # Перевіряємо енергію ЗАРАЗ (щоб знати, яку кнопку показати)
     energy_left = await db.check_energy(user_id)
 
+    # 3. ШУКАЄМО СЦЕНАРІЙ
     scenario = SCENARIOS.get(scenario_id)
     
     if scenario:
+        # Шукаємо обраний варіант серед опцій сценарію
         selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
 
         if selected_option:
@@ -1112,12 +1124,15 @@ async def handle_game_choice(callback: types.CallbackQuery):
             new_score = current_score + points_change
             new_level = current_level + 1
 
+            # 4. ОНОВЛЮЄМО БАЗУ
             await db.update_game_progress(user_id, new_score, new_level)
             await db.log_move(user_id, scenario_id, points_change)
 
+            # Формуємо візуальний фідбек
             indicator = "🟢" if points_change > 0 else "🔴" if points_change < 0 else "⚪"
             score_feedback = f"{indicator} **{points_change} балів мудрості**"
 
+            # 5. СТВОРЮЄМО КЛАВІАТУРУ
             kb = InlineKeyboardBuilder()
             kb.button(text="🔙 В меню", callback_data="back_home")
             
@@ -1125,11 +1140,12 @@ async def handle_game_choice(callback: types.CallbackQuery):
             if energy_left > 0:
                 kb.button(text="▶️ Продовжити", callback_data="game_next")
             else:
-                # Якщо енергії 0, міняємо кнопку на "Підсумок"
+                # Якщо енергії 0, міняємо кнопку на "Підсумок", щоб юзер розумів, що це кінець
                 kb.button(text="📊 Підсумок дня", callback_data="game_next")
             
             kb.adjust(2)
 
+            # 6. ФОРМУЄМО ТЕКСТ
             msg_text = (
                 f"{scenario['text']}\n\n"
                 f"✅ **Твій вибір:** {selected_option['text']}\n\n"
@@ -1137,9 +1153,11 @@ async def handle_game_choice(callback: types.CallbackQuery):
                 f"💡 *{selected_option['msg']}*"
             )
             
+            # Додаємо попередження, якщо енергія закінчилася
             if energy_left == 0:
                 msg_text += "\n\n⚠️ *Це було твоє останнє тренування на сьогодні.*"
 
+            # 7. ВІДПРАВЛЯЄМО РЕЗУЛЬТАТ
             try:
                 await callback.message.edit_text(
                     msg_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
@@ -1147,6 +1165,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
             except Exception as e:
                 logging.error(f"Game edit error: {e}")
 
+    # 8. ЗАВЕРШУЄМО CALLBACK (щоб прибрати "годинник" з кнопки)
     try:
         await callback.answer()
     except TelegramBadRequest:
