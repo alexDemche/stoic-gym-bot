@@ -945,8 +945,7 @@ async def send_level(user_id, message_to_edit):
     if energy <= 0:
         summary = await db.get_daily_summary(user_id)
         
-        # Логіка фідбеку
-        if summary and summary["points"] > 0:
+        if summary and summary["points"] != 0: # Додано перевірку на нуль
             if summary["mistakes"] == 0:
                 feedback = "🌟 **Бездоганний день!** Твій розум був гострим, як меч."
             elif summary["mistakes"] > summary["wisdoms"]:
@@ -984,20 +983,22 @@ async def send_level(user_id, message_to_edit):
         target_scenario_id = current_level
         header = f"🛡️ **Рівень {current_level}/{max_scenarios}**"
     else:
-        # Для 101+ беремо випадковий сценарій, але зберігаємо прогрес рівня
         target_scenario_id = random.randint(1, max_scenarios)
         header = f"♾️ **Шлях Мудреця | Рівень {current_level}**"
 
     scenario_data = SCENARIOS.get(target_scenario_id)
+    
+    # ПЕРЕВІРКА: чи існує сценарій, ПЕРЕД ТИМ як списувати енергію
     if not scenario_data:
         await message_to_edit.edit_text("📜 Архів порожній. Повернись пізніше.", 
                                        reply_markup=get_main_menu())
         return
 
-    # 4. СПИСАННЯ ЕНЕРГІЇ ТА ПІДГОТОВКА ВАРІАНТІВ
+    # 🟢 СПИСУЄМО ЕНЕРГІЮ ТІЛЬКИ ТУТ (коли сценарій точно є)
     await db.decrease_energy(user_id)
-    new_energy = energy - 1
+    new_energy = energy - 1 
 
+    # 4. ПІДГОТОВКА ВАРІАНТІВ
     options = scenario_data["options"].copy()
     random.shuffle(options)
 
@@ -1008,7 +1009,6 @@ async def send_level(user_id, message_to_edit):
     for i, opt in enumerate(options):
         label = labels[i] if i < len(labels) else str(i+1)
         options_text += f"**{label})** {opt['text']}\n\n"
-        # 🟢 ВАЖЛИВО: Передаємо ID сценарію ТА ID варіанту, щоб обробник знав, що це
         builder.button(text=f"🔹 {label}", callback_data=f"anygame_{target_scenario_id}_{opt['id']}")
 
     builder.button(text="🔙 В меню", callback_data="back_home")
@@ -1087,13 +1087,10 @@ async def reset_gym(callback: types.CallbackQuery):
 
 
 # Цей хендлер ловить вибір варіантів у грі (усі callback-и, які не є системними)
-# 🏛️ Оновлений фільтр: ловимо "anygame_", де лежить і ID сценарію, і вибір
 @dp.callback_query(F.data.startswith("anygame_"))
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
-    # 1. РОЗПАКОВУЄМО ДАНІ З КНОПКИ
-    # Наприклад: anygame_42_opt1 -> scenario_id=42, choice_id=opt1
     try:
         _, scenario_id, choice_id = callback.data.split("_")
         scenario_id = int(scenario_id)
@@ -1101,34 +1098,38 @@ async def handle_game_choice(callback: types.CallbackQuery):
         await callback.answer("Помилка передачі даних.")
         return
 
-    # 2. ОТРИМУЄМО СТАТИСТИКУ
     current_score, current_level, _ = await db.get_stats(user_id)
+    # Перевіряємо енергію ЗАРАЗ (після того, як send_level її вже списав)
+    energy_left = await db.check_energy(user_id)
 
-    # 3. ШУКАЄМО СЦЕНАРІЙ (тепер за ID з кнопки, а не за рівнем юзера!)
     scenario = SCENARIOS.get(scenario_id)
     
     if scenario:
-        selected_option = next(
-            (opt for opt in scenario["options"] if opt["id"] == choice_id), None
-        )
+        selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
 
         if selected_option:
             points_change = selected_option["score"]
             new_score = current_score + points_change
             new_level = current_level + 1
 
-            # 4. ОНОВЛЮЄМО БАЗУ (Рівень тепер росте нескінченно)
             await db.update_game_progress(user_id, new_score, new_level)
             await db.log_move(user_id, scenario_id, points_change)
 
-            # Визначаємо фідбек (емодзі)
             indicator = "🟢" if points_change > 0 else "🔴" if points_change < 0 else "⚪"
             score_feedback = f"{indicator} **{points_change} балів мудрості**"
 
             kb = InlineKeyboardBuilder()
+            kb.button(text="🔙 В меню", callback_data="back_home")
             
-            # Логіка фіналу (якщо ти хочеш зупинити на 100, але ми робимо Endless)
-            # Якщо хочеш Endless Mode, прибираємо перевірку на max_level
+            # --- ЛОГІКА РОЗУМНОЇ КНОПКИ ---
+            if energy_left > 0:
+                kb.button(text="▶️ Продовжити", callback_data="game_next")
+            else:
+                # Якщо енергії 0, міняємо кнопку на "Підсумок"
+                kb.button(text="📊 Підсумок дня", callback_data="game_next")
+            
+            kb.adjust(2)
+
             msg_text = (
                 f"{scenario['text']}\n\n"
                 f"✅ **Твій вибір:** {selected_option['text']}\n\n"
@@ -1136,11 +1137,9 @@ async def handle_game_choice(callback: types.CallbackQuery):
                 f"💡 *{selected_option['msg']}*"
             )
             
-            kb.button(text="🔙 В меню", callback_data="back_home")
-            kb.button(text="▶️ Продовжити", callback_data="game_next")
-            kb.adjust(2)
+            if energy_left == 0:
+                msg_text += "\n\n⚠️ *Це було твоє останнє тренування на сьогодні.*"
 
-            # 5. ОНОВЛЮЄМО ЕКРАН
             try:
                 await callback.message.edit_text(
                     msg_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
@@ -1148,7 +1147,6 @@ async def handle_game_choice(callback: types.CallbackQuery):
             except Exception as e:
                 logging.error(f"Game edit error: {e}")
 
-    # 6. ВІДПОВІДАЄМО НА КЛІК (обов'язково)
     try:
         await callback.answer()
     except TelegramBadRequest:
