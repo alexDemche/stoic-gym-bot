@@ -1259,6 +1259,7 @@ async def main():
     await db.create_tables()
     await db.create_academy_table()
     await db.create_progress_table()
+    await db.create_lab_tables()
 
     # 2. ПЛАНУВАЛЬНИК (SCHEDULER)
     scheduler = AsyncIOScheduler()

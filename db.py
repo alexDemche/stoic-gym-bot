@@ -535,6 +535,43 @@ class Database:
             """
             )
 
+
+    # --- Lab table (дихання, сон)
+    async def create_lab_tables(self):
+        """Створює таблицю історії для Stoic Lab"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS lab_history (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    practice_type TEXT,
+                    score_earned INTEGER,
+                    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT fk_lab_user FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                )
+            """)
+
+    async def save_lab_practice(self, user_id: int, practice_type: str, score: int):
+        """Оновлює бали юзера та записує практику в історію (транзакція)"""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Оновлюємо бали в таблиці users
+                await conn.execute(
+                    "UPDATE users SET score = score + $1 WHERE user_id = $2",
+                    score, user_id
+                )
+                # 2. Записуємо в лог лаби
+                await conn.execute(
+                    """
+                    INSERT INTO lab_history (user_id, practice_type, score_earned)
+                    VALUES ($1, $2, $3)
+                    """,
+                    user_id, practice_type, score
+                )
+                # Повертаємо новий рахунок
+                new_score = await conn.fetchval("SELECT score FROM users WHERE user_id = $1", user_id)
+                return new_score
+
     async def get_random_quote(self):
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(

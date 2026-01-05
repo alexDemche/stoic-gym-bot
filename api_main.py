@@ -402,6 +402,27 @@ async def create_guest(req: GuestRequest):
     except Exception as e:
         print(f"❌ Error creating guest: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+ 
+# --- ЛАБОРАТОРІЯ  ---   
+@api_router.post("/lab/complete")
+async def complete_lab_practice(req: LabComplete):
+    try:
+        # Викликаємо метод БД, який ми створили вище
+        new_score = await db.save_lab_practice(
+            req.user_id, 
+            req.practice_type, 
+            req.score
+        )
+        
+        return {
+            "status": "success",
+            "practice_type": req.practice_type,
+            "added_score": req.score,
+            "total_score": new_score
+        }
+    except Exception as e:
+        print(f"❌ Error in complete_lab_practice: {e}")
+        raise HTTPException(status_code=500, detail="Не вдалося зберегти результат практики")
 
 
 # --- ПІДКЛЮЧАЄМО РОУТЕР ДО APP ---
