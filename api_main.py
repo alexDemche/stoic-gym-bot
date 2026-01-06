@@ -193,13 +193,38 @@ async def get_next_gym_scenario(user_id: int):
 
 @api_router.post("/gym/answer")
 async def submit_gym_answer(data: GymAnswer):
-    current_score, current_level, _ = await db.get_stats(data.user_id)
+    # 1. Отримуємо актуальний стан користувача безпосередньо з БД
+    current_score, db_level, _ = await db.get_stats(data.user_id)
+    
+    # 2. ВАЛІДАЦІЯ: Перевіряємо, чи рівень, який прислав клієнт, збігається з рівнем у БД
+    # Якщо юзер намагається вдруге прислати відповідь на той самий рівень (data.level == db_level - 1)
+    # або старий рівень (data.level < db_level), ми відхиляємо запит.
+    if data.level != db_level:
+        raise HTTPException(
+            status_code=400, 
+            detail="Цей рівень вже пройдено або дані застаріли. Не хитруй, стоїку!"
+        )
+    
+    # 3. Перевірка енергії (додатковий захист, щоб не піти в мінус)
+    energy = await db.check_energy(data.user_id)
+    if energy <= 0:
+        raise HTTPException(status_code=403, detail="Енергія вичерпана")
+
+    # 4. Розрахунок нових значень
     new_score = current_score + data.score
-    new_level = current_level + 1
+    new_level = db_level + 1 # Переходимо на наступний рівень
+    
+    # 5. Атомарне оновлення бази
     await db.update_game_progress(data.user_id, new_score, new_level)
     await db.decrease_energy(data.user_id)
     await db.log_move(data.user_id, data.level, data.score)
-    return {"status": "success", "new_score": new_score, "new_level": new_level}
+    
+    return {
+        "status": "success", 
+        "new_score": new_score, 
+        "new_level": new_level,
+        "energy_left": energy - 1
+    }
 
 # --- АКАДЕМІЯ ---
 
