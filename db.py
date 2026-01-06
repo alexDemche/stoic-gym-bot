@@ -37,6 +37,10 @@ class Database:
                 )
             """
             )
+            
+            await conn.execute("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS device_id TEXT UNIQUE;
+            """)
 
             # 2. Таблиця журналу (щоденник)
             await conn.execute(
@@ -201,6 +205,55 @@ class Database:
                 
                 return data
             return None
+        
+    async def get_user_by_device(self, device_id: str):
+        """Шукає користувача за ID пристрою"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT user_id, username, score, level, birthdate FROM users WHERE device_id = $1", 
+                device_id
+            )
+            return dict(row) if row else None
+        
+    async def sync_and_merge_users(self, guest_id: int, telegram_id: int, device_id: str):
+        """Об'єднує дані гостя з основним профілем Telegram"""
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Отримуємо дані гостя
+                guest = await conn.fetchrow(
+                    "SELECT username, birthdate, score, level FROM users WHERE user_id = $1", 
+                    guest_id
+                )
+                
+                if guest:
+                    # 2. Оновлюємо основний профіль (сумуємо бали, беремо макс. рівень та ім'я гостя)
+                    await conn.execute("""
+                        UPDATE users 
+                        SET username = $1, 
+                            birthdate = COALESCE(users.birthdate, $2), 
+                            score = score + $3, 
+                            level = GREATEST(level, $4),
+                            device_id = $5
+                        WHERE user_id = $6
+                    """, guest['username'], guest['birthdate'], guest['score'], guest['level'], device_id, telegram_id)
+
+                    # 3. Переносимо прогрес Академії (уникаючи дублікатів через ON CONFLICT)
+                    await conn.execute("""
+                        INSERT INTO user_academy_progress (user_id, article_id, read_at)
+                        SELECT $1, article_id, read_at FROM user_academy_progress WHERE user_id = $2
+                        ON CONFLICT (user_id, article_id) DO NOTHING
+                    """, telegram_id, guest_id)
+
+                    # 4. Переносимо Журнал та Історію ігор
+                    await conn.execute("UPDATE journal SET user_id = $1 WHERE user_id = $2", telegram_id, guest_id)
+                    await conn.execute("UPDATE game_history SET user_id = $1 WHERE user_id = $2", telegram_id, guest_id)
+                    await conn.execute("UPDATE mentor_history SET user_id = $1 WHERE user_id = $2", telegram_id, guest_id)
+                    await conn.execute("UPDATE lab_history SET user_id = $1 WHERE user_id = $2", telegram_id, guest_id)
+
+                    # 5. Видаляємо гостьовий акаунт
+                    await conn.execute("DELETE FROM users WHERE user_id = $1", guest_id)
+                    return True
+                return False
 
     # --- ЕНЕРГІЯ ---
 
