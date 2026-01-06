@@ -44,13 +44,6 @@ class LabComplete(BaseModel):
 
 class SyncRequest(BaseModel):
     code: str
-    guest_id: int
-    device_id: str
-    
-class DeviceAuthRequest(BaseModel): # Краще використовувати модель замість dict
-    device_id: str
-    username: str = "Мандрівник"
-    birthdate: str = "1995-01-01"
 
 # --- НАЛАШТУВАННЯ ---
 ADMIN_TOKEN = os.getenv("ADMIN_SECRET_TOKEN")
@@ -133,110 +126,53 @@ async def get_leaderboard(limit: int = 20):
 
 # --- АВТОРИЗАЦІЯ ТА СИНХРОНІЗАЦІЯ ---
 
-@api_router.post("/auth/device")
-async def device_auth(req: DeviceAuthRequest):
-    device_id = req.device_id
-    username = req.username
-    birthdate_str = req.birthdate
-
-    if not device_id:
-        raise HTTPException(status_code=400, detail="Device ID обов'язковий")
-
-    async with db.pool.acquire() as conn:
-        # 1. Шукаємо юзера за device_id
-        user = await conn.fetchrow("SELECT * FROM users WHERE device_id = $1", device_id)
-        
-        if user:
-            # Юзер уже був у нас — повертаємо його дані
-            # Це і є "фікс" фрізів та логаутів
-            full_data = await db.get_full_user_data(user["user_id"])
-            return {
-                "status": "exists",
-                "user_id": int(user["user_id"]),
-                "user_data": full_data
-            }
-        
-        # 2. Якщо пристрою немає — створюємо нового гостя
-        try:
-            guest_id = random.randint(900000000, 999999999)
-            b_date = datetime.strptime(birthdate_str, "%Y-%m-%d").date()
-            
-            # Створюємо юзера
-            await db.add_user(guest_id, username, b_date)
-            # Прив'язуємо пристрій
-            await conn.execute("UPDATE users SET device_id = $1 WHERE user_id = $2", device_id, guest_id)
-            
-            return {
-                "status": "success",
-                "user_id": guest_id,
-                "user_data": {
-                    "username": username,
-                    "birthdate": birthdate_str,
-                    "score": 0,
-                    "level": 1
-                }
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+@api_router.post("/auth/create_guest")
+async def create_guest(req: GuestRequest):
+    try:
+        b_date = datetime.strptime(req.birthdate, "%Y-%m-%d").date()
+        await db.add_user(req.user_id, req.username, b_date)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/auth/sync")
 async def sync_with_code(req: SyncRequest):
-    # req.code, req.guest_id, req.device_id
-    
     async with db.pool.acquire() as conn:
-        async with conn.transaction():
-            # 1. Перевірка коду синхронізації
-            row = await conn.fetchrow(
-                "DELETE FROM sync_codes WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc') RETURNING user_id",
-                req.code
-            )
-            if not row:
-                raise HTTPException(status_code=401, detail="Код недійсний")
-            
-            tg_id = row["user_id"]
-            gst_id = req.guest_id
-
-            # 2. Отримуємо ВСІ дані гостя перед видаленням
-            guest = await conn.fetchrow(
-                "SELECT username, birthdate, score, level FROM users WHERE user_id = $1", 
-                gst_id
-            )
-
-            if guest:
-                # 3. ОНОВЛЮЄМО основний ТГ-профіль даними з телефона
-                # Ми беремо ім'я (username) та дату народження з телефона,
-                # а бали (score) додаємо до існуючих.
-                await conn.execute("""
-                    UPDATE users 
-                    SET username = $1, 
-                        birthdate = $2, 
-                        score = score + $3, 
-                        level = GREATEST(level, $4),
-                        device_id = $5,
-                        user_type = 'synced'
-                    WHERE user_id = $6
-                """, 
-                guest["username"], guest["birthdate"], guest["score"], guest["level"], req.device_id, tg_id)
-
-                # 4. Переносимо прогрес Академії та Журнал
-                await conn.execute("""
-                    INSERT INTO user_academy_progress (user_id, article_id, read_at)
-                    SELECT $1, article_id, read_at FROM user_academy_progress WHERE user_id = $2
-                    ON CONFLICT (user_id, article_id) DO NOTHING
-                """, tg_id, gst_id)
-                
-                await conn.execute("UPDATE journal SET user_id = $1 WHERE user_id = $2", tg_id, gst_id)
-                await conn.execute("UPDATE game_history SET user_id = $1 WHERE user_id = $2", tg_id, gst_id)
-
-                # 5. Видаляємо тепер уже порожній гостьовий профіль
-                await conn.execute("DELETE FROM users WHERE user_id = $1", gst_id)
-            else:
-                # Якщо раптом гостя не знайшли, просто прив'язуємо пристрій до ТГ
-                await conn.execute("UPDATE users SET device_id = $1 WHERE user_id = $2", req.device_id, tg_id)
-
-            # 6. Повертаємо чистий, об'єднаний профіль
-            user_data = await db.get_full_user_data(tg_id)
-            return {"status": "success", "user_id": int(tg_id), "user_data": user_data}
+        # 1. Вилучаємо код та отримуємо ID користувача (атомарна операція)
+        row = await conn.fetchrow(
+            """
+            DELETE FROM sync_codes 
+            WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc') 
+            RETURNING user_id
+            """,
+            req.code
+        )
+        
+        if not row:
+            raise HTTPException(status_code=401, detail="Код недійсний або застарів")
+        
+        user_id = row["user_id"]
+        
+        # 2. Отримуємо повні дані профілю (вже з правильним іменем та балами)
+        user_data = await db.get_full_user_data(user_id)
+        
+        if not user_data:
+            # Якщо код був, а юзера в базі немає — це системна помилка
+            raise HTTPException(status_code=404, detail="Дані користувача не знайдено")
+        
+        # 3. Додаємо дані Академії (теорія)
+        academy_count, academy_rank = await db.get_academy_progress(user_id)
+        
+        # Формуємо фінальний об'єкт для React Native
+        user_data["academy_total"] = academy_count
+        user_data["academy_rank"] = academy_rank
+        
+        # Переконуємось, що user_id у JSON — це число (BIGINT може прийти як string)
+        return {
+            "status": "success", 
+            "user_id": int(user_id), 
+            "user_data": user_data
+        }
 
 # --- STOIC GYM ---
 
