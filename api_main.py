@@ -36,6 +36,7 @@ class GuestRequest(BaseModel):
 class AcademyReadRequest(BaseModel):
     user_id: int
     article_id: int
+    score: int
 
 class LabComplete(BaseModel):
     user_id: int
@@ -257,10 +258,20 @@ async def check_article(user_id: int, article_id: int):
 
 @api_router.post("/academy/complete")
 async def complete_lesson(req: AcademyReadRequest):
+    # 1. Перевірка ліміту на день
     daily_count = await db.get_daily_academy_count(req.user_id)
-    if daily_count >= 5: return {"success": False, "error": "limit_reached"}
-    is_new = await db.mark_article_as_read(req.user_id, req.article_id)
-    return {"success": True, "is_new": is_new}
+    if daily_count >= 5: 
+        return {"success": False, "error": "limit_reached"}
+    
+    # 2. Викликаємо оновлену функцію DB
+    # Вона сама перевірить унікальність і нарахує бали, якщо треба
+    is_new = await db.mark_article_as_read(req.user_id, req.article_id, score=req.score)
+    
+    return {
+        "success": True, 
+        "is_new": is_new, 
+        "added_score": req.score if is_new else 0
+    }
 
 # --- ЩОДЕННИК ---
 

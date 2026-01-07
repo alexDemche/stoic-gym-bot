@@ -397,19 +397,34 @@ class Database:
             """
             )
 
-    async def mark_article_as_read(self, user_id, article_id):
-        """Позначає статтю як прочитану. Повертає True, якщо це вперше."""
+    async def mark_article_as_read(self, user_id, article_id, score=0):
+        """
+        Позначає статтю як прочитану. 
+        Якщо це вперше (is_new) і передано score > 0, автоматично нараховує бали юзеру.
+        """
         async with self.pool.acquire() as conn:
-            result = await conn.execute(
-                """
-                INSERT INTO user_academy_progress (user_id, article_id)
-                VALUES ($1, $2) ON CONFLICT DO NOTHING
-            """,
-                user_id,
-                article_id,
-            )
-            # "INSERT 0 1" означає, що рядок додався успішно (раніше не читав)
-            return result == "INSERT 0 1"
+            async with conn.transaction(): # Починаємо транзакцію (все або нічого)
+                # 1. Пробуємо записати прогрес
+                result = await conn.execute(
+                    """
+                    INSERT INTO user_academy_progress (user_id, article_id)
+                    VALUES ($1, $2) ON CONFLICT DO NOTHING
+                    """,
+                    user_id,
+                    article_id,
+                )
+                
+                # "INSERT 0 1" означає, що рядок додався (раніше не читав)
+                is_new = (result == "INSERT 0 1")
+
+                # 2. Якщо стаття нова і є бали — оновлюємо рахунок користувача
+                if is_new and score > 0:
+                    await conn.execute(
+                        "UPDATE users SET score = score + $1 WHERE user_id = $2",
+                        score, user_id
+                    )
+                
+                return is_new
 
     async def get_academy_progress(self, user_id):
         """Повертає кількість прочитаних статей та шкільний клас"""
