@@ -366,21 +366,25 @@ async def complete_lab_practice(
     new_score = await db.save_lab_practice(user_id, req.practice_type, req.score)
     return {"status": "success", "added_score": req.score, "total_score": new_score}
 
-# --- АДМІНСЬКЕ ВИДАЛЕННЯ ---
+
+# --- ВИДАЛЕННЯ АКАУНТА ---
 @app.delete("/api/user/{target_user_id}")
 async def delete_account(
     target_user_id: int, 
-    # Тут вимагаємо АБО адмінський токен, АБО щоб юзер видаляв сам себе
-    x_admin_token: str = Header(None),
-    # Але для простоти зараз залишимо тільки адмінський токен
+    # Ми дізнаємось, хто робить запит, через його токен
+    requester_id: int = Depends(get_current_user)
 ):
-    # Тільки адмін з правильним токеном може видаляти
-    if x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # Перевірка: чи намагається юзер видалити сам себе?
+    if requester_id != target_user_id:
+        # Якщо ID в токені не співпадає з ID, який хочуть видалити
+        raise HTTPException(status_code=403, detail="Ви не можете видалити чужий акаунт")
 
+    # Якщо перевірка пройшла успішно - видаляємо
     success = await db.delete_user_data(target_user_id)
+    
     if success:
         return {"status": "deleted"}
+        
     raise HTTPException(status_code=404, detail="User not found")
 
 app.include_router(api_router)
