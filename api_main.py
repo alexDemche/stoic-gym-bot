@@ -335,18 +335,43 @@ async def mentor_chat(
     req: MentorRequest, 
     user_id: int = Depends(get_current_user)
 ):
+    # 1. ЗАХИСТ ВІД ДОВГИХ ТЕКСТІВ (Економія токенів)
+    # Беремо тільки останні 5 повідомлень (щоб пам'ятав контекст, але не всю історію)
+    # І обрізаємо кожне повідомлення до 500 символів
+    safe_messages = []
+    if req.messages:
+        for msg in req.messages[-5:]: 
+            content = str(msg.get("content", ""))
+            if len(content) > 500:
+                content = content[:500] + "..." # Обрізаємо
+            safe_messages.append({"role": msg["role"], "content": content})
+    
+    if not safe_messages:
+         return {"reply": "Ти мовчиш..."}
+
+    # 2. ЗАХИСТ ВІД СПАМУ (Rate Limiting)
+    # Цей метод ми додали в db.py
+    # limit_per_day=50 означає ~1.5$ в місяць макс. на юзера (дуже грубо)
+    status_limit = await db.check_ai_limit(user_id, limit_per_day=50)
+    
+    if status_limit == "cooldown":
+        # 429 Too Many Requests
+        raise HTTPException(status_code=429, detail="Не поспішай. Дай мені 5 секунд на роздуми.")
+    
+    if status_limit == "limit_reached":
+        raise HTTPException(status_code=429, detail="На сьогодні ліміт мудрості вичерпано. Приходь завтра.")
+
+    # 3. ВИКОНАННЯ ЗАПИТУ
     try:
-        if not req.messages: 
-            return {"reply": "Я не почув твого питання."}
-        
-        last_msg = req.messages[-1]["content"]
-        
+        # Зберігаємо останнє питання юзера
+        last_msg = safe_messages[-1]["content"]
         await db.save_mentor_message(user_id, "user", last_msg)
         
         response = await client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role": "system", "content": SYSTEM_PROMPT_AI_MSG}] + req.messages, 
-            temperature=0.7
+            messages=[{"role": "system", "content": SYSTEM_PROMPT_AI_MSG}] + safe_messages, 
+            temperature=0.7,
+            max_tokens=350 # <-- ОБМЕЖЕННЯ ВІДПОВІДІ (щоб AI не писав занадто багато)
         )
         reply = response.choices[0].message.content
         await db.save_mentor_message(user_id, "assistant", reply)
@@ -354,7 +379,8 @@ async def mentor_chat(
         return {"reply": reply}
     except Exception as e:
         print(f"Error AI: {e}")
-        return {"reply": "Мій розум зараз у тумані..."}
+        # Якщо помилка, повертаємо щось філософське, щоб не лякати юзера кодами
+        return {"reply": "Мій зв'язок із Логосом зараз перервано..."}
 
 # --- ЛАБОРАТОРІЯ ---
 

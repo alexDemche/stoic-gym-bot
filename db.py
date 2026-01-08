@@ -104,9 +104,23 @@ class Database:
                 await conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_users_auth_token ON users(auth_token)"
                 )
-                
             except Exception as e:
                 print(f"Migration log: {e}")
+                
+            # ДОДАЄМО МІГРАЦІЮ ДЛЯ ЛІМІТІВ
+            try:
+                await conn.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_message_count INTEGER DEFAULT 0"
+                )
+                await conn.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ai_request TIMESTAMP"
+                )
+                # Дата останнього скидання лічильника (щоб знати, коли настав "новий день")
+                await conn.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ai_reset DATE DEFAULT CURRENT_DATE"
+                )
+            except Exception as e:
+                print(f"Migration AI limits log: {e}")
 
 
     async def add_user(self, user_id, username, birthdate=None):
@@ -695,6 +709,58 @@ class Database:
                 user_id,
                 limit,
             )
+            
+    async def check_ai_limit(self, user_id: int, limit_per_day: int = 50):
+        """
+        Перевіряє, чи можна юзеру писати AI.
+        Повертає True, якщо можна. Викидає помилку або повертає False, якщо ні.
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT ai_message_count, last_ai_request, last_ai_reset FROM users WHERE user_id = $1", 
+                user_id
+            )
+            
+            if not row: return False
+            
+            count = row['ai_message_count']
+            last_req = row['last_ai_request']
+            last_reset = row['last_ai_reset']
+            now = datetime.now() # Тут треба import datetime
+            today = now.date()
+
+            # 1. Скидання лічильника, якщо настав новий день
+            if last_reset < today:
+                count = 0
+                await conn.execute(
+                    "UPDATE users SET ai_message_count = 0, last_ai_reset = $1 WHERE user_id = $2",
+                    today, user_id
+                )
+
+            # 2. Перевірка Кулдауну (спам-фільтр): 5 секунд
+            if last_req:
+                # Конвертуємо в naive datetime, якщо треба, або просто порівнюємо
+                # (залежить від налаштувань БД, спростимо:)
+                diff = (now - last_req).total_seconds()
+                if diff < 5: 
+                    return "cooldown" # Занадто швидко
+
+            # 3. Перевірка Денного ліміту
+            if count >= limit_per_day:
+                return "limit_reached"
+
+            # Якщо все ок - збільшуємо лічильник
+            await conn.execute(
+                """
+                UPDATE users 
+                SET ai_message_count = ai_message_count + 1, 
+                    last_ai_request = $1 
+                WHERE user_id = $2
+                """,
+                now, user_id
+            )
+            
+            return "ok"
       
     # Повне видалення користувача та всіх пов'язаних даних   
     async def delete_user_data(self, user_id: int):
