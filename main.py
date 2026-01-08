@@ -19,8 +19,7 @@ from dotenv import load_dotenv
 
 from academy_service import format_article
 from ai_service import get_stoic_advice
-# Імпортуємо базу цитат з data.py
-from data import HELP_TEXT, SCENARIOS, STOIC_DB
+from data import HELP_TEXT
 from db import Database
 from utils import get_stoic_rank
 
@@ -363,12 +362,21 @@ async def refresh_quote(callback: types.CallbackQuery):
     await send_random_quote(callback)
 
 async def send_random_quote(callback: types.CallbackQuery):
-    quote = random.choice(STOIC_DB)
+    quote = await db.get_random_quote()
+    if not quote:
+        await callback.answer("Цитати поки відсутні в базі.", show_alert=True)
+        return
+
     text = f"📜 *{quote['category']}*\n\n_{quote['text']}_\n\n— {quote['author']}"
-    try: await callback.message.edit_text(text, reply_markup=get_quote_keyboard(), parse_mode="Markdown")
-    except Exception: pass
-    try: await callback.answer()
-    except TelegramBadRequest: pass
+    
+    try: 
+        await callback.message.edit_text(text, reply_markup=get_quote_keyboard(), parse_mode="Markdown")
+    except Exception: 
+        pass
+    try: 
+        await callback.answer()
+    except TelegramBadRequest: 
+        pass
 
 
 # --- MEMENTO MORI ---
@@ -451,14 +459,13 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "mode_gym")
 async def start_gym(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    # Оновлюємо ім'я при вході в гру
     await db.add_user(user_id, callback.from_user.first_name)
 
-    # Отримуємо поточний прогрес
     score, level, _ = await db.get_stats(user_id)
     
-    # Визначаємо режим гри для заголовка
-    max_scenarios = len(SCENARIOS)
+    # 🆕 ЗАМІНА: Беремо кількість сценаріїв з бази
+    max_scenarios = await db.get_scenarios_count()
+    
     if level <= max_scenarios:
         mode_title = f"📖 Сюжетний режим ({level}/{max_scenarios})"
     else:
@@ -467,12 +474,12 @@ async def start_gym(callback: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.button(text="▶️ Продовжити тренування", callback_data="game_start")
 
-    if level > 1 or score > 0:  # Показуємо кнопку, тільки якщо є прогрес
+    if level > 1 or score > 0:
         builder.button(text="🔄 Почати заново", callback_data="reset_gym_confirm")
 
     builder.button(text="🔙 В меню", callback_data="back_home")
-
     builder.adjust(1)
+    
     await callback.message.edit_text(
         f"⚔️ **Stoic Gym**\n"
         f"📍 {mode_title}\n\n" 
@@ -588,7 +595,7 @@ async def send_level(user_id, message_to_edit):
     # 1. ОТРИМАННЯ ДАНИХ ТА ЕНЕРГІЇ
     score, current_level, _ = await db.get_stats(user_id)
     energy = await db.check_energy(user_id)
-    max_scenarios = len(SCENARIOS)
+    max_scenarios = await db.get_scenarios_count()
 
     # 2. ПЕРЕВІРКА ЕНЕРГІЇ
     if energy <= 0:
@@ -637,11 +644,11 @@ async def send_level(user_id, message_to_edit):
         # Чіткий заголовок для бескінечного режиму
         header = f"♾️ **Бескінечний режим | Рівень {current_level}**"
 
-    scenario_data = SCENARIOS.get(target_scenario_id)
+    scenario_data = await db.get_scenario_by_level(target_scenario_id)
     
     if not scenario_data:
         await message_to_edit.edit_text(
-            "📜 Архів порожній. Повернись пізніше.", 
+            "📜 Помилка бази даних: сценарій не знайдено.", 
             reply_markup=get_main_menu()
         )
         return
@@ -738,7 +745,7 @@ async def handle_game_choice(callback: types.CallbackQuery):
     energy_left = await db.check_energy(user_id)
 
     # 3. ШУКАЄМО СЦЕНАРІЙ
-    scenario = SCENARIOS.get(scenario_id)
+    scenario = await db.get_scenario_by_level(scenario_id)
     
     if scenario:
         # Шукаємо обраний варіант серед опцій сценарію
@@ -805,7 +812,11 @@ async def send_daily_quote(bot: Bot):
         return
 
     # Вибираємо випадкову цитату
-    quote = random.choice(STOIC_DB)
+    quote = await db.get_random_quote()
+    if not quote:
+        logging.warning("Спроба розсилки, але база цитат порожня.")
+        return
+    
     text = f"☀️ **Мудрість на сьогодні:**\n\n_{quote['text']}_\n\n— {quote['author']}\n\n👉 /start — Пройти тренування"
 
     count = 0

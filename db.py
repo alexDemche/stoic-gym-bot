@@ -651,7 +651,7 @@ class Database:
 
             # 2. Отримуємо варіанти відповідей
             options = await conn.fetch(
-                "SELECT option_id as id, text, score, msg FROM scenario_options WHERE scenario_id = $1",
+                "SELECT option_id as id, text, score, msg FROM scenario_options WHERE scenario_id = $1 ORDER BY id ASC",
                 scenario["id"],
             )
 
@@ -660,6 +660,11 @@ class Database:
                 "text": scenario["text"],
                 "options": [dict(opt) for opt in options],
             }
+            
+    async def get_scenarios_count(self):
+        """Повертає загальну кількість сценаріїв у базі"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT COUNT(*) FROM scenarios")
 
     # ШІ Ментор
     async def save_mentor_message(self, user_id, role, content):

@@ -216,7 +216,7 @@ async def get_user_stats(user_id: int = Depends(get_current_user)):
 
 # --- STOIC GYM ---
 
-@api_router.get("/gym/scenario") # Прибрав {user_id}
+@api_router.get("/gym/scenario")
 async def get_next_gym_scenario(user_id: int = Depends(get_current_user)):
     energy = await db.check_energy(user_id)
     if energy <= 0:
@@ -224,7 +224,7 @@ async def get_next_gym_scenario(user_id: int = Depends(get_current_user)):
         return {"error": "no_energy", "message": "Енергія вичерпана", "summary": summary}
     
     score, level, _ = await db.get_stats(user_id)
-    max_scenarios = await db.pool.fetchval("SELECT COUNT(*) FROM scenarios")
+    max_scenarios = await db.get_scenarios_count()
     target_id = level if level <= max_scenarios else random.randint(1, max_scenarios)
     scenario = await db.get_scenario_by_level(target_id)
     if not scenario:
