@@ -5,9 +5,9 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Security, status
-from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import APIKeyHeader
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -15,32 +15,32 @@ from config import SYSTEM_PROMPT_AI_MSG
 from db import Database
 from utils import get_stoic_rank
 
-# --- МОДЕЛІ ДАНИХ ---
+# --- МОДЕЛІ ДАНИХ (ОНОВЛЕНІ: без user_id там, де не треба) ---
 class GymAnswer(BaseModel):
-    user_id: int
+    # user_id прибрали!
     score: int
     level: int
 
 class JournalEntry(BaseModel):
-    user_id: int
+    # user_id прибрали!
     text: str
 
 class MentorRequest(BaseModel):
-    user_id: int
+    # user_id прибрали!
     messages: list
 
 class GuestRequest(BaseModel):
-    user_id: int
+    user_id: int # Тут залишаємо, це ID пристрою при реєстрації
     username: str
     birthdate: str
 
 class AcademyReadRequest(BaseModel):
-    user_id: int
+    # user_id прибрали!
     article_id: int
     score: int
 
 class LabComplete(BaseModel):
-    user_id: int
+    # user_id прибрали!
     practice_type: str
     score: int
 
@@ -49,6 +49,8 @@ class SyncRequest(BaseModel):
 
 # --- НАЛАШТУВАННЯ ---
 ADMIN_TOKEN = os.getenv("ADMIN_SECRET_TOKEN")
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY") # Крок 1 (API Key)
+
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 db = Database()
 
@@ -60,26 +62,6 @@ async def lifespan(app: FastAPI):
     await db.create_progress_table()
     await db.create_lab_tables()
     yield
-    
-# --- БЕЗПЕКА: API KEY ---
-API_KEY_NAME = "X-App-Token" # Назва заголовка, який ми будемо шукати
-API_KEY = os.getenv("APP_SECRET_KEY") # Секретний ключ з .env
-
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-
-async def verify_app_token(api_key_header: str = Security(api_key_header)):
-    # Якщо ключа немає в .env (локальний запуск без налаштувань) - пропускаємо (або блокуємо)
-    if not API_KEY:
-        return True 
-        
-    if api_key_header == API_KEY:
-        return api_key_header
-    
-    # Якщо ключ не співпав або відсутній - викидаємо 403 помилку
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Could not validate credentials"
-    )
 
 app = FastAPI(title="Stoic Trainer API", lifespan=lifespan)
 
@@ -95,18 +77,122 @@ if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Тепер всі запити до /api/... будуть проходити через verify_app_token
+# --- БЕЗПЕКА: 1. API KEY (Захист від ботів) ---
+api_key_header = APIKeyHeader(name="X-App-Token", auto_error=False)
+
+async def verify_app_token(token: str = Security(api_key_header)):
+    if not APP_SECRET_KEY: return True # Якщо не налаштували, пускаємо (для тесту)
+    if token == APP_SECRET_KEY:
+        return token
+    raise HTTPException(status_code=403, detail="Invalid App Credentials")
+
+# Застосовуємо API Key до всіх роутів
 api_router = APIRouter(prefix="/api", dependencies=[Depends(verify_app_token)])
 
-# --- ЕНДПОІНТИ ЗАГАЛЬНІ ---
+# --- БЕЗПЕКА: 2. USER AUTH (Захист від IDOR) ---
+user_auth_header = APIKeyHeader(name="Authorization", auto_error=False)
+
+async def get_current_user(token: str = Security(user_auth_header)):
+    """Перевіряє токен користувача і повертає user_id"""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing auth token")
+    
+    # Викликаємо метод, який ти додав у db.py
+    user_id = await db.get_user_id_by_token(token)
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid auth token")
+        
+    return user_id
+
+# --- ЕНДПОІНТИ ЗАГАЛЬНІ (Публічні або напів-публічні) ---
 
 @app.get("/")
 async def root():
     user_count = await db.count_users()
     return {"status": "online", "total_users": user_count}
 
-@api_router.get("/stats/{user_id}")
-async def get_user_stats(user_id: int):
+@api_router.get("/quotes/random")
+async def get_random_quote():
+    quote = await db.get_random_quote()
+    if not quote:
+        return {"text": "Живи зараз.", "author": "Сенека", "category": "Час"}
+    return quote
+
+@api_router.get("/leaderboard")
+async def get_leaderboard(limit: int = 20):
+    users = await db.get_top_users(limit)
+    return [
+        {
+            # Тут user_id можна показувати (це публічний топ), або приховати
+            "username": user["username"] or "Мандрівник",
+            "score": user["score"],
+            "rank_name": get_stoic_rank(user["score"]),
+        } for user in users
+    ]
+
+# --- АВТОРИЗАЦІЯ (Тут ми ВИДАЄМО токени) ---
+
+@api_router.post("/auth/create_guest")
+async def create_guest(req: GuestRequest):
+    try:
+        b_date = datetime.strptime(req.birthdate, "%Y-%m-%d").date()
+        # db.add_user тепер генерує токен всередині
+        await db.add_user(req.user_id, req.username, b_date)
+        
+        # Нам треба повернути цей токен клієнту!
+        # Оскільки add_user не повертає токен, ми дістанемо його окремим запитом 
+        # (або можна переписати add_user щоб повертав, але так простіше зараз)
+        # В даному випадку ми знаємо user_id (бо це реєстрація по Device ID)
+        
+        # Тимчасово: дістаємо токен, який щойно створився
+        async with db.pool.acquire() as conn:
+            token = await conn.fetchval("SELECT auth_token FROM users WHERE user_id = $1", req.user_id)
+
+        return {"status": "success", "token": token}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/auth/sync")
+async def sync_with_code(req: SyncRequest):
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            DELETE FROM sync_codes 
+            WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc') 
+            RETURNING user_id
+            """,
+            req.code
+        )
+        
+        if not row:
+            raise HTTPException(status_code=401, detail="Код недійсний")
+        
+        user_id = row["user_id"]
+        
+        # Тепер беремо повні дані, ВКЛЮЧАЮЧИ ТОКЕН
+        user_data = await db.get_full_user_data(user_id)
+        
+        # Важливо: get_full_user_data має повертати auth_token. 
+        # Якщо ні - дістанемо його:
+        token = await conn.fetchval("SELECT auth_token FROM users WHERE user_id = $1", user_id)
+        
+        academy_count, academy_rank = await db.get_academy_progress(user_id)
+        user_data["academy_total"] = academy_count
+        user_data["academy_rank"] = academy_rank
+        
+        return {
+            "status": "success", 
+            "user_id": int(user_id), 
+            "token": token, # <--- ПОВЕРТАЄМО ТОКЕН
+            "user_data": user_data
+        }
+
+# --- ЗАХИЩЕНІ ЕНДПОІНТИ (Вимагають Token) ---
+# Увага: скрізь user_id береться з get_current_user
+
+@api_router.get("/stats") # Прибрав {user_id}
+async def get_user_stats(user_id: int = Depends(get_current_user)):
     score, level, name = await db.get_stats(user_id)
     global_rank = await db.get_user_position(user_id)
     energy = await db.check_energy(user_id)
@@ -128,79 +214,10 @@ async def get_user_stats(user_id: int):
         "next_rank_score": next_rank_score,
     }
 
-@api_router.get("/quotes/random")
-async def get_random_quote():
-    quote = await db.get_random_quote()
-    if not quote:
-        return {"text": "Живи зараз.", "author": "Сенека", "category": "Час"}
-    return quote
-
-@api_router.get("/leaderboard")
-async def get_leaderboard(limit: int = 20):
-    users = await db.get_top_users(limit)
-    return [
-        {
-            "user_id": user["user_id"],
-            "username": user["username"] or "Мандрівник",
-            "score": user["score"],
-            "rank_name": get_stoic_rank(user["score"]),
-        } for user in users
-    ]
-
-# --- АВТОРИЗАЦІЯ ТА СИНХРОНІЗАЦІЯ ---
-
-@api_router.post("/auth/create_guest")
-async def create_guest(req: GuestRequest):
-    try:
-        b_date = datetime.strptime(req.birthdate, "%Y-%m-%d").date()
-        await db.add_user(req.user_id, req.username, b_date)
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.post("/auth/sync")
-async def sync_with_code(req: SyncRequest):
-    async with db.pool.acquire() as conn:
-        # 1. Вилучаємо код та отримуємо ID користувача (атомарна операція)
-        row = await conn.fetchrow(
-            """
-            DELETE FROM sync_codes 
-            WHERE code = $1 AND expires_at > (now() AT TIME ZONE 'utc') 
-            RETURNING user_id
-            """,
-            req.code
-        )
-        
-        if not row:
-            raise HTTPException(status_code=401, detail="Код недійсний або застарів")
-        
-        user_id = row["user_id"]
-        
-        # 2. Отримуємо повні дані профілю (вже з правильним іменем та балами)
-        user_data = await db.get_full_user_data(user_id)
-        
-        if not user_data:
-            # Якщо код був, а юзера в базі немає — це системна помилка
-            raise HTTPException(status_code=404, detail="Дані користувача не знайдено")
-        
-        # 3. Додаємо дані Академії (теорія)
-        academy_count, academy_rank = await db.get_academy_progress(user_id)
-        
-        # Формуємо фінальний об'єкт для React Native
-        user_data["academy_total"] = academy_count
-        user_data["academy_rank"] = academy_rank
-        
-        # Переконуємось, що user_id у JSON — це число (BIGINT може прийти як string)
-        return {
-            "status": "success", 
-            "user_id": int(user_id), 
-            "user_data": user_data
-        }
-
 # --- STOIC GYM ---
 
-@api_router.get("/gym/scenario/{user_id}")
-async def get_next_gym_scenario(user_id: int):
+@api_router.get("/gym/scenario") # Прибрав {user_id}
+async def get_next_gym_scenario(user_id: int = Depends(get_current_user)):
     energy = await db.check_energy(user_id)
     if energy <= 0:
         summary = await db.get_daily_summary(user_id)
@@ -215,32 +232,25 @@ async def get_next_gym_scenario(user_id: int):
     return {"scenario": scenario, "energy": energy, "level": level, "is_endless": level > max_scenarios}
 
 @api_router.post("/gym/answer")
-async def submit_gym_answer(data: GymAnswer):
-    # 1. Отримуємо актуальний стан користувача безпосередньо з БД
-    current_score, db_level, _ = await db.get_stats(data.user_id)
+async def submit_gym_answer(
+    data: GymAnswer, 
+    user_id: int = Depends(get_current_user)
+):
+    current_score, db_level, _ = await db.get_stats(user_id)
     
-    # 2. ВАЛІДАЦІЯ: Перевіряємо, чи рівень, який прислав клієнт, збігається з рівнем у БД
-    # Якщо юзер намагається вдруге прислати відповідь на той самий рівень (data.level == db_level - 1)
-    # або старий рівень (data.level < db_level), ми відхиляємо запит.
     if data.level != db_level:
-        raise HTTPException(
-            status_code=400, 
-            detail="Цей рівень вже пройдено або дані застаріли. Не хитруй, стоїку!"
-        )
+        raise HTTPException(status_code=400, detail="Дані застаріли")
     
-    # 3. Перевірка енергії (додатковий захист, щоб не піти в мінус)
-    energy = await db.check_energy(data.user_id)
+    energy = await db.check_energy(user_id)
     if energy <= 0:
         raise HTTPException(status_code=403, detail="Енергія вичерпана")
 
-    # 4. Розрахунок нових значень
     new_score = current_score + data.score
-    new_level = db_level + 1 # Переходимо на наступний рівень
+    new_level = db_level + 1 
     
-    # 5. Атомарне оновлення бази
-    await db.update_game_progress(data.user_id, new_score, new_level)
-    await db.decrease_energy(data.user_id)
-    await db.log_move(data.user_id, data.level, data.score)
+    await db.update_game_progress(user_id, new_score, new_level)
+    await db.decrease_energy(user_id)
+    await db.log_move(user_id, data.level, data.score)
     
     return {
         "status": "success", 
@@ -251,88 +261,87 @@ async def submit_gym_answer(data: GymAnswer):
 
 # --- АКАДЕМІЯ ---
 
-@api_router.get("/academy/status/{user_id}")
-async def get_academy_status(user_id: int):
+@api_router.get("/academy/status") # Прибрав {user_id}
+async def get_academy_status(user_id: int = Depends(get_current_user)):
     count, rank = await db.get_academy_progress(user_id)
     daily_count = await db.get_daily_academy_count(user_id)
     return {"total_learned": count, "rank": rank, "daily_count": daily_count, "can_learn_more": daily_count < 5}
 
 @api_router.get("/academy/articles")
-async def get_articles(limit: int = 50, offset: int = 0):
+async def get_articles(limit: int = 50, offset: int = 0, user_id: int = Depends(get_current_user)):
     async with db.pool.acquire() as conn:
         rows = await conn.fetch("SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2", limit, offset)
         return [dict(row) for row in rows]
 
 @api_router.get("/academy/articles/{article_id}")
-async def get_article_detail(article_id: int):
+async def get_article_detail(article_id: int, user_id: int = Depends(get_current_user)):
     article = await db.get_article_by_id(article_id)
     if not article: raise HTTPException(status_code=404, detail="Статтю не знайдено")
     return article
 
-@api_router.get("/academy/library/{user_id}")
-async def get_library(user_id: int):
+@api_router.get("/academy/library") # Прибрав {user_id}
+async def get_library(user_id: int = Depends(get_current_user)):
     return await db.get_user_library(user_id, limit=100)
 
-@api_router.get("/academy/check/{user_id}/{article_id}")
-async def check_article(user_id: int, article_id: int):
+@api_router.get("/academy/check/{article_id}") # Прибрав {user_id} з URL
+async def check_article(article_id: int, user_id: int = Depends(get_current_user)):
     is_read = await db.is_article_read(user_id, article_id)
     return {"is_read": is_read}
 
 @api_router.post("/academy/complete")
-async def complete_lesson(req: AcademyReadRequest):
-    # 1. Перевірка ліміту на день
-    daily_count = await db.get_daily_academy_count(req.user_id)
+async def complete_lesson(
+    req: AcademyReadRequest, 
+    user_id: int = Depends(get_current_user)
+):
+    daily_count = await db.get_daily_academy_count(user_id)
     if daily_count >= 5: 
         return {"success": False, "error": "limit_reached"}
     
-    # 2. Викликаємо оновлену функцію DB
-    # Вона сама перевірить унікальність і нарахує бали, якщо треба
-    is_new = await db.mark_article_as_read(req.user_id, req.article_id, score=req.score)
+    is_new = await db.mark_article_as_read(user_id, req.article_id, score=req.score)
     
-    return {
-        "success": True, 
-        "is_new": is_new, 
-        "added_score": req.score if is_new else 0
-    }
+    return {"success": True, "is_new": is_new, "added_score": req.score if is_new else 0}
 
 # --- ЩОДЕННИК ---
 
-@api_router.get("/journal/history/{user_id}")
-async def get_journal_history(user_id: int, limit: int = 10):
+@api_router.get("/journal/history") # Прибрав {user_id}
+async def get_journal_history(limit: int = 10, user_id: int = Depends(get_current_user)):
     entries = await db.get_journal_entries(user_id, limit)
     return [dict(e) for e in entries]
 
 @api_router.post("/journal/save")
-async def save_journal_entry(req: JournalEntry):
-    await db.save_journal_entry(req.user_id, req.text)
+async def save_journal_entry(
+    req: JournalEntry, 
+    user_id: int = Depends(get_current_user)
+):
+    await db.save_journal_entry(user_id, req.text)
     return {"status": "success"}
 
 @api_router.delete("/journal/delete/{entry_id}")
-async def delete_journal_entry(entry_id: int, user_id: int):
+async def delete_journal_entry(entry_id: int, user_id: int = Depends(get_current_user)):
+    # Функція в DB вже перевіряє user_id (DELETE ... AND user_id = $2)
+    # Тому юзер не зможе видалити чужий запис
     await db.delete_journal_entry(user_id, entry_id)
     return {"status": "success"}
 
 # --- ШІ МЕНТОР ---
 
-@api_router.get("/mentor/history/{user_id}")
-async def get_mentor_history(user_id: int):
+@api_router.get("/mentor/history") # Прибрав {user_id}
+async def get_mentor_history(user_id: int = Depends(get_current_user)):
     entries = await db.get_mentor_history(user_id)
     return [dict(e) for e in entries]
 
 @api_router.post("/mentor/chat")
-async def mentor_chat(req: MentorRequest):
+async def mentor_chat(
+    req: MentorRequest, 
+    user_id: int = Depends(get_current_user)
+):
     try:
         if not req.messages: 
             return {"reply": "Я не почув твого питання."}
         
         last_msg = req.messages[-1]["content"]
         
-        # ❌ ВИДАЛЯЄМО ЦЕЙ РЯДОК:
-        # await db.add_user(req.user_id, "Мандрівник") 
-        
-        # Просто зберігаємо повідомлення. 
-        # Якщо юзера немає в базі, db.save_mentor_message сам це виправить (через try/except)
-        await db.save_mentor_message(req.user_id, "user", last_msg)
+        await db.save_mentor_message(user_id, "user", last_msg)
         
         response = await client.chat.completions.create(
             model="gpt-4o-mini", 
@@ -340,23 +349,36 @@ async def mentor_chat(req: MentorRequest):
             temperature=0.7
         )
         reply = response.choices[0].message.content
-        await db.save_mentor_message(req.user_id, "assistant", reply)
+        await db.save_mentor_message(user_id, "assistant", reply)
         
         return {"reply": reply}
     except Exception as e:
+        print(f"Error AI: {e}")
         return {"reply": "Мій розум зараз у тумані..."}
 
 # --- ЛАБОРАТОРІЯ ---
 
 @api_router.post("/lab/complete")
-async def complete_lab_practice(req: LabComplete):
-    new_score = await db.save_lab_practice(req.user_id, req.practice_type, req.score)
+async def complete_lab_practice(
+    req: LabComplete, 
+    user_id: int = Depends(get_current_user)
+):
+    new_score = await db.save_lab_practice(user_id, req.practice_type, req.score)
     return {"status": "success", "added_score": req.score, "total_score": new_score}
 
-# --- Повне видалення користувача ---
-@app.delete("/api/user/{user_id}")
-async def delete_account(user_id: int):
-    success = await db.delete_user_data(user_id)
+# --- АДМІНСЬКЕ ВИДАЛЕННЯ ---
+@app.delete("/api/user/{target_user_id}")
+async def delete_account(
+    target_user_id: int, 
+    # Тут вимагаємо АБО адмінський токен, АБО щоб юзер видаляв сам себе
+    x_admin_token: str = Header(None),
+    # Але для простоти зараз залишимо тільки адмінський токен
+):
+    # Тільки адмін з правильним токеном може видаляти
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    success = await db.delete_user_data(target_user_id)
     if success:
         return {"status": "deleted"}
     raise HTTPException(status_code=404, detail="User not found")

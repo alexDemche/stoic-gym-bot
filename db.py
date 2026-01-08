@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime
 
 import asyncpg
@@ -95,23 +96,49 @@ class Database:
                 await conn.execute(
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_date DATE DEFAULT CURRENT_DATE"
                 )
+                # НОВА МІГРАЦІЯ: Токен авторизації
+                # Ми створюємо індекс, щоб пошук по токену був миттєвим
+                await conn.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_token TEXT"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_users_auth_token ON users(auth_token)"
+                )
+                
             except Exception as e:
                 print(f"Migration log: {e}")
 
 
     async def add_user(self, user_id, username, birthdate=None):
+        new_token = str(uuid.uuid4()) # Генеруємо унікальний ключ для юзера
+        
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO users (user_id, username, birthdate)
-                VALUES ($1, $2, $3)
+                INSERT INTO users (user_id, username, birthdate, auth_token)
+                VALUES ($1, $2, $3, $4)
                 ON CONFLICT (user_id) DO UPDATE 
-                SET username = COALESCE(users.username, EXCLUDED.username), -- Зберігаємо старе, якщо воно є
-                    birthdate = COALESCE(users.birthdate, EXCLUDED.birthdate) -- Зберігаємо дату, якщо вона є
+                SET username = COALESCE(users.username, EXCLUDED.username),
+                    birthdate = COALESCE(users.birthdate, EXCLUDED.birthdate)
+                    -- Токен ми НЕ оновлюємо, якщо він вже є, щоб не розлогінити юзера
                 """,
                 user_id,
                 username,
                 birthdate,
+                new_token 
+            )
+            # Якщо у старого юзера ще немає токена (він був зареєстрований раніше),
+            # треба його додати:
+            await conn.execute(
+                "UPDATE users SET auth_token = $1 WHERE user_id = $2 AND auth_token IS NULL",
+                new_token, user_id
+            )
+            
+    async def get_user_id_by_token(self, token: str):
+        """Знаходить user_id за токеном авторизації"""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT user_id FROM users WHERE auth_token = $1", token
             )
 
     async def get_stats(self, user_id):
