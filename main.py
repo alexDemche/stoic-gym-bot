@@ -278,7 +278,7 @@ async def handle_already_read(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "academy_limit_reached")
 async def handle_limit_reached_nav(callback: types.CallbackQuery):
-    await callback.answer("Ти засвоїв 5 уроків сьогодні! Відпочинь. 🏛️", show_alert=True)
+    await callback.answer("Ти засвоїв 5 уроків сьогодні!\n\n Відпочинь, і завтра продовжимо! 🏛️", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("academy_read_"))
@@ -382,9 +382,11 @@ def generate_memento_text(birth_date: datetime):
     progress_bar = "▓" * filled_blocks + "░" * (20 - filled_blocks)
     return (
         f"📅 **Точка відліку:** {birth_date.year} рік\n\n"
-        f"⏳ **Середній життєвий шлях:**\n`{progress_bar}` {percentage:.1f}%\n\n"
+        f"⏳ **Середній життєвий шлях 80 років(статистика):**\n`{progress_bar}` {percentage:.1f}%\n\n"
         f"🔹 Прожито тижнів: **{weeks_lived}**\n"
-        f"🔸 Умовний запас: **~{int(TOTAL_WEEKS - weeks_lived)}** тижнів"
+        f"🔸 Умовний запас: **~{int(TOTAL_WEEKS - weeks_lived)}** тижнів\n\n"
+        f"✨ *«Не те щоб ми маємо мало часу, а те, що ми багато його втрачаємо.» — Сенека*\n\n"
+        f"☝️ _Пам'ятай: цей графік — лише модель. Справжня цінність життя вимірюється не тижнями, а глибиною твоїх вчинків._"
     )
 
 @dp.callback_query(F.data == "reset_memento")
@@ -470,12 +472,42 @@ async def start_game_from_button(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "mode_top")
 async def show_leaderboard(callback: types.CallbackQuery):
     top_users = await db.get_top_users(10)
-    text = "🏆 <b>Алея Слави</b>\n\n"
-    for i, (uid, name, score) in enumerate(top_users, start=1):
-        safe_name = html.quote(name) if name else "Невідомий"
-        text += f"{i}. <b>{safe_name}</b> — {score}\n"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    # В HTML замість ** використовуємо <b>
+    text = f"🏆 <b>Алея Слави Стоїків</b>\n\n"
+
+    if not top_users:
+        text += "Поки що ніхто не набрав балів. Будь першим!"
+    else:
+        for i, (uid, name, score) in enumerate(top_users, start=1):
+            # Медальки для перших трьох
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
+
+            # Визначення рангу (беремо тільки смайл, наприклад "🦉")
+            rank_emoji = get_stoic_rank(score).split()[0]
+
+            # Екрануємо ім'я, щоб символи < > & не ламали HTML
+            if name:
+                safe_name = html.quote(name)
+            else:
+                safe_name = "Невідомий Стоїк"
+
+            # Формат: 🥇 1. <b>Ім'я</b> (🦉) — 350
+            text += f"{medal} {i}. <b>{safe_name}</b> ({rank_emoji}) — {score}\n"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
+        ]
+    )
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        # Якщо все одно якась помилка, відправимо хоча б без форматування
+        logging.error(f"Error in leaderboard HTML: {e}")
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode=None)
+        
     await callback.answer()
 
 @dp.callback_query(F.data == "game_next")
@@ -485,7 +517,18 @@ async def go_to_next_level(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "journal_write")
 async def start_journal(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("📝 **Щоденник**\n👇Запиши свій головний урок за сьогодні.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Скасувати", callback_data="back_home")]]), parse_mode="Markdown")
+    await callback.message.edit_text(
+        "📝 **Щоденник Стоїка**\n\n"
+        "Марк Аврелій писав: «Наші думки визначають якість нашого життя».\n\n"
+        "👇Запиши свій головний урок за сьогодні або те, за що ти вдячний. "
+        "Це допоможе закріпити мудрість на практиці.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Скасувати", callback_data="back_home")]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
     await state.set_state(JournalState.waiting_for_entry)
     await callback.answer()
 
@@ -506,6 +549,7 @@ async def view_journal(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
 
 async def generate_sync_code(user_id):
+    """Генерує 6-значний код і зберігає в БД на 10 хвилин"""
     code = "".join([str(random.randint(0, 9)) for _ in range(6)])
     async with db.pool.acquire() as conn:
         await conn.execute("DELETE FROM sync_codes WHERE user_id = $1", user_id)
@@ -515,105 +559,270 @@ async def generate_sync_code(user_id):
 async def clear_expired_codes():
     async with db.pool.acquire() as conn:
         await conn.execute("DELETE FROM sync_codes WHERE expires_at < CURRENT_TIMESTAMP")
+        logging.info("🧹 Старі коди синхронізації видалено.")
 
+# --- ФУНКЦІЯ ДЛЯ ВІДПРАВКИ РІВНЯ ---
 async def send_level(user_id, message_to_edit):
+    # 1. ОТРИМАННЯ ДАНИХ ТА ЕНЕРГІЇ
     score, current_level, _ = await db.get_stats(user_id)
     energy = await db.check_energy(user_id)
-    if energy <= 0:
-        await message_to_edit.edit_text("🌙 **Енергія вичерпана.** Відновиться завтра.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]), parse_mode="Markdown")
-        return
-    
     max_scenarios = len(SCENARIOS)
-    target_id = current_level if current_level <= max_scenarios else random.randint(1, max_scenarios)
-    scenario_data = SCENARIOS.get(target_id)
-    if not scenario_data:
-        await message_to_edit.edit_text("Архів порожній.", reply_markup=get_main_menu())
+
+    # 2. ПЕРЕВІРКА ЕНЕРГІЇ І ПІДСУМОК ДНЯ
+    if energy <= 0:
+        summary = await db.get_daily_summary(user_id)
+        
+        # Логіка рефлексії (фідбек залежно від результатів)
+        if summary and summary["points"] != 0:
+            if summary["mistakes"] == 0:
+                feedback = "🌟 **Бездоганний день!** Твій розум був гострим, як меч."
+            elif summary["mistakes"] > summary["wisdoms"]:
+                feedback = "🌪 **День випробувань.** Сьогодні емоції часто брали гору."
+            else:
+                feedback = "⚖️ **Гідний результат.** Ти діяв зважено."
+            
+            stats_text = (
+                f"\n\n📊 **Підсумок сесії:**\n"
+                f"✅ Мудрих рішень: **{summary['wisdoms']}**\n"
+                f"❌ Емоційних зривів: **{summary['mistakes']}**\n"
+                f"💎 Зароблено балів: **{summary['points']}**"
+            )
+        else:
+            feedback = "🧘‍♂️ **Час для роздумів.**"
+            stats_text = "\n\nСьогодні ти не проходив нових випробувань."
+
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📝 Запис у щоденник", callback_data="journal_write")
+        kb.button(text="🔙 В меню", callback_data="back_home")
+        kb.adjust(1)
+
+        await message_to_edit.edit_text(
+            f"🌙 **Енергія вичерпана**\n\n"
+            f"{feedback}{stats_text}\n\n"
+            "Стоїцизм вимагає пауз для осмислення. Обдумай уроки і повертайся завтра.\n\n"
+            "⚡ Енергія відновиться зранку.",
+            reply_markup=kb.as_markup(),
+            parse_mode="Markdown"
+        )
         return
 
+    # 3. ВИБІР СЦЕНАРІЮ (Linear vs Endless)
+    if current_level <= max_scenarios:
+        target_scenario_id = current_level
+        header = f"🛡️ **Рівень {current_level}/{max_scenarios}**"
+    else:
+        # Якщо рівні закінчилися - вмикаємо нескінченний режим (рандом)
+        target_scenario_id = random.randint(1, max_scenarios)
+        header = f"♾️ **Шлях Мудреця | Рівень {current_level}**"
+
+    scenario_data = SCENARIOS.get(target_scenario_id)
+    
+    # ПЕРЕВІРКА: чи існує сценарій, ПЕРЕД ТИМ як списувати енергію
+    if not scenario_data:
+        await message_to_edit.edit_text(
+            "📜 Архів порожній. Повернись пізніше.", 
+            reply_markup=get_main_menu()
+        )
+        return
+
+    # 🟢 СПИСУЄМО ЕНЕРГІЮ ТІЛЬКИ ТУТ (коли сценарій точно є)
     await db.decrease_energy(user_id)
+    new_energy = energy - 1 
+
+    # 4. ПІДГОТОВКА ВАРІАНТІВ
     options = scenario_data["options"].copy()
     random.shuffle(options)
+
     labels = ["A", "B", "C", "D"]
     builder = InlineKeyboardBuilder()
     text_opts = ""
+
     for i, opt in enumerate(options):
-        lbl = labels[i]
+        # Якщо варіантів більше ніж літер, використовуємо цифри
+        lbl = labels[i] if i < len(labels) else str(i+1)
         text_opts += f"**{lbl})** {opt['text']}\n\n"
-        builder.button(text=f"🔹 {lbl}", callback_data=f"anygame_{target_id}_{opt['id']}")
+        builder.button(text=f"🔹 {lbl}", callback_data=f"anygame_{target_scenario_id}_{opt['id']}")
+
     builder.button(text="🔙 В меню", callback_data="back_home")
-    builder.adjust(2, 2, 1)
-    await message_to_edit.edit_text(f"🛡️ **Рівень {current_level}** | ⚡ {energy-1}/5\n\n{scenario_data['text']}\n\n👇 **Твій вибір:**\n\n{text_opts}", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    builder.adjust(2, 2, 1) # Кнопки відповідей по 2 в ряд, "В меню" - одна знизу
 
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    await message.answer(HELP_TEXT, parse_mode="Markdown")
-
-@dp.callback_query(F.data == "show_help")
-async def show_help_callback(callback: types.CallbackQuery):
-    await callback.message.edit_text(HELP_TEXT, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]), parse_mode="Markdown")
-    await callback.answer()
+    await message_to_edit.edit_text(
+        f"{header} | ⚡ {new_energy}/5\n\n"
+        f"{scenario_data['text']}\n\n"
+        f"👇 **Твій вибір:**\n\n{text_opts}",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
 
 @dp.callback_query(F.data == "reset_gym_confirm")
 async def confirm_reset(callback: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Так", callback_data="reset_gym_final")
-    builder.button(text="❌ Ні", callback_data="mode_gym")
-    await callback.message.edit_text("⚠️ Скинути прогрес?", reply_markup=builder.as_markup())
+    builder.button(text="✅ Так, скинути все", callback_data="reset_gym_final")
+    builder.button(text="❌ Ні, повернутися", callback_data="mode_gym")
+
+    await callback.message.edit_text(
+        "⚠️ **Увага!** Ти впевнений, що хочеш скинути свій прогрес?\n"
+        "Твій рахунок і рівень будуть обнулені.",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown",
+    )
     await callback.answer()
 
 @dp.callback_query(F.data == "reset_gym_final")
 async def reset_gym(callback: types.CallbackQuery):
-    await db.update_game_progress(callback.from_user.id, 0, 1)
-    await callback.message.edit_text("✅ Прогрес скинуто!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="▶️ Почати", callback_data="game_start")], [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]))
+    user_id = callback.from_user.id
+    # Скидаємо в базі: score=0, level=1
+    await db.update_game_progress(user_id, 0, 1)
+
+    await callback.message.edit_text(
+        "✅ **Прогрес скинуто!**\n\n"
+        "Твій шлях стоїка починається знову. Натисни 'Почати тренування'.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="▶️ Почати тренування", callback_data="game_start"
+                    )
+                ],
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")],
+            ]
+        ),
+        parse_mode="Markdown",
+    )
     await callback.answer()
 
+# Цей хендлер ловить вибір варіантів у грі (усі callback-и, які не є системними)
 @dp.callback_query(F.data.startswith("anygame_"))
 async def handle_game_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+
+    # 1. РОЗПАКОВУЄМО ДАНІ З КНОПКИ (УНІВЕРСАЛЬНИЙ МЕТОД)
+    # Цей блок тепер коректно обробляє ID з підкресленнями (наприклад, lvl33_opt1)
     try:
         parts = callback.data.split("_")
+        # Має бути мінімум 3 частини: anygame, scenario_id, choice_id
+        if len(parts) < 3:
+            raise ValueError
+        
         scenario_id = int(parts[1])
+        # Збираємо choice_id назад, скільки б там не було підкреслень
         choice_id = "_".join(parts[2:])
-    except: return
+        
+    except ValueError:
+        await callback.answer("Помилка передачі даних.")
+        return
 
+    # 2. ОТРИМУЄМО СТАТИСТИКУ ТА ЕНЕРГІЮ
     current_score, current_level, _ = await db.get_stats(user_id)
+    # Перевіряємо енергію ЗАРАЗ (щоб знати, яку кнопку показати)
     energy_left = await db.check_energy(user_id)
+
+    # 3. ШУКАЄМО СЦЕНАРІЙ
     scenario = SCENARIOS.get(scenario_id)
-    selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
+    
+    if scenario:
+        # Шукаємо обраний варіант серед опцій сценарію
+        selected_option = next((opt for opt in scenario["options"] if opt["id"] == choice_id), None)
 
-    if selected_option:
-        points = selected_option["score"]
-        await db.update_game_progress(user_id, current_score + points, current_level + 1)
-        await db.log_move(user_id, scenario_id, points)
-        
-        kb = InlineKeyboardBuilder()
-        kb.button(text="🔙 В меню", callback_data="back_home")
-        if energy_left > 0: kb.button(text="▶️ Далі", callback_data="game_next")
-        else: kb.button(text="📊 Підсумок", callback_data="game_next")
-        kb.adjust(2)
-        
-        msg = f"{scenario['text']}\n\n✅ **Вибір:** {selected_option['text']}\n\n{'🟢' if points>0 else '🔴'} **{points} балів**\n\n💡 *{selected_option['msg']}*"
-        if energy_left == 0: msg += "\n\n⚠️ Енергія вичерпана."
-        
-        try: await callback.message.edit_text(msg, reply_markup=kb.as_markup(), parse_mode="Markdown")
-        except: pass
-    try: await callback.answer()
-    except: pass
+        if selected_option:
+            points_change = selected_option["score"]
+            new_score = current_score + points_change
+            new_level = current_level + 1
 
+            # 4. ОНОВЛЮЄМО БАЗУ
+            await db.update_game_progress(user_id, new_score, new_level)
+            await db.log_move(user_id, scenario_id, points_change)
+
+            # Формуємо візуальний фідбек
+            indicator = "🟢" if points_change > 0 else "🔴" if points_change < 0 else "⚪"
+            score_feedback = f"{indicator} **{points_change} балів мудрості**"
+
+            # 5. СТВОРЮЄМО КЛАВІАТУРУ
+            kb = InlineKeyboardBuilder()
+            kb.button(text="🔙 В меню", callback_data="back_home")
+            
+            # --- ЛОГІКА РОЗУМНОЇ КНОПКИ ---
+            if energy_left > 0:
+                kb.button(text="▶️ Продовжити", callback_data="game_next")
+            else:
+                # Якщо енергії 0, міняємо кнопку на "Підсумок", щоб юзер розумів, що це кінець
+                kb.button(text="📊 Підсумок дня", callback_data="game_next")
+            
+            kb.adjust(2)
+
+            # 6. ФОРМУЄМО ТЕКСТ
+            msg_text = (
+                f"{scenario['text']}\n\n"
+                f"✅ **Твій вибір:** {selected_option['text']}\n\n"
+                f"{score_feedback}\n\n"
+                f"💡 *{selected_option['msg']}*"
+            )
+            
+            # Додаємо попередження, якщо енергія закінчилася
+            if energy_left == 0:
+                msg_text += "\n\n⚠️ *Це було твоє останнє тренування на сьогодні.* \n\n Стоїцизм вимагає пауз для осмислення. Обдумай уроки і повертайся завтра.\n\n⚡ Енергія відновиться зранку."
+                
+            # 7. ВІДПРАВЛЯЄМО РЕЗУЛЬТАТ
+            try:
+                await callback.message.edit_text(
+                    msg_text, reply_markup=kb.as_markup(), parse_mode="Markdown"
+                )
+            except Exception as e:
+                logging.error(f"Game edit error: {e}")
+
+    # 8. ЗАВЕРШУЄМО CALLBACK (щоб прибрати "годинник" з кнопки)
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        logging.info("Запит застарів, ігноруємо.")
+
+# --- Розсилка повідомлень юзерам ---
 async def send_daily_quote(bot: Bot):
+    """Розсилає випадкову цитату всім користувачам"""
     users = await db.get_all_users()
+
+    if not users:
+        return
+
+    # Вибираємо випадкову цитату
     quote = random.choice(STOIC_DB)
     text = f"☀️ **Мудрість на сьогодні:**\n\n_{quote['text']}_\n\n— {quote['author']}\n\n👉 /start — Пройти тренування"
+
+    count = 0
     for user_id in users:
-        try: await bot.send_message(user_id, text, parse_mode="Markdown")
-        except: pass
-        await asyncio.sleep(0.05)
+        try:
+            await bot.send_message(user_id, text, parse_mode="Markdown")
+            count += 1
+            # Робимо маленьку паузу, щоб Telegram не заблокував за спам (ліміти)
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            # Користувач міг заблокувати бота
+            logging.error(
+                f"Не вдалося надіслати повідомлення користувачу {user_id}: {e}"
+            )
+
+    logging.info(f"✅ Розсилка завершена. Отримали: {count} з {len(users)} користувачів.")
 
 
 # --- ШІ МЕНТОР ---
 @dp.callback_query(F.data == "mode_ai")
 async def start_ai_mentor(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("🤖 **Зал Роздумів**\nНапиши своє питання.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Вийти", callback_data="back_home")]]), parse_mode="Markdown")
+    await callback.message.edit_text(
+        "🤖 **Зал Роздумів**\n\n"
+        "Я — цифрова тінь Марка Аврелія. Я тут, щоб вислухати твої тривоги.\n\n"
+        "👇 Напиши мені, що тебе турбує, або запитай поради. \n"
+        "_(Наприклад: 'Як перестати злитися на колег?' або 'Я втратив мотивацію')_",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔙 Вийти з діалогу", callback_data="back_home"
+                    )
+                ]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
     await state.set_state(MentorState.chatting)
     await callback.answer()
 
@@ -646,7 +855,8 @@ async def process_ai_chat(message: types.Message, state: FSMContext, bot: Bot):
     await db.save_mentor_message(user_id, "user", user_text)
 
     # Отримуємо відповідь
-    ai_response = await get_stoic_advice(user_text, user_id) # Передаємо user_id, якщо get_stoic_advice підтримує історію
+    # ВАЖЛИВО: ai_service має приймати user_id
+    ai_response = await get_stoic_advice(user_text, user_id) 
 
     # Зберігаємо відповідь
     await db.save_mentor_message(user_id, "assistant", ai_response)
@@ -657,6 +867,87 @@ async def process_ai_chat(message: types.Message, state: FSMContext, bot: Bot):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Завершити", callback_data="back_home")]]),
     )
 
+# --- ФІДБЕК ---
+@dp.callback_query(F.data == "send_feedback")
+async def start_feedback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "✉️ **Зв'язок з розробником**\n\n"
+        "Напиши своє повідомлення (відгук, ідею або знайдену помилку) і я передам його автору.\n\n"
+        "👇 *Чекаю на твій текст:*",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Скасувати", callback_data="back_home")]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+    await state.set_state(FeedbackState.waiting_for_message)
+    await callback.answer()
+
+@dp.message(FeedbackState.waiting_for_message)
+async def process_feedback(message: types.Message, state: FSMContext, bot: Bot):
+    user_text = message.text
+    user_id = message.from_user.id
+    user_name = message.from_user.first_name
+
+    # ID адміна
+    ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
+    # 1. Відправляємо повідомлення (адміну)
+    try:
+        admin_text = (
+            f"📨 **Новий відгук!**\n"
+            f"👤 Від: {user_name} (`{user_id}`)\n\n"
+            f"💬 Текст:\n{user_text}"
+        )
+        await bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
+
+        # 2. Відповідаємо користувачу
+        await message.answer(
+            "✅ **Повідомлення відправлено!**\nДякую за твій внесок у розвиток проекту.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
+                ]
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await message.answer("⚠️ Сталася помилка при відправці. Спробуй пізніше.")
+        logging.error(f"Feedback error: {e}")
+
+    await state.clear()
+
+# --- АДМІН-КОМАНДА: РОЗСИЛКА ---
+# Використання: /broadcast Текст повідомлення
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message, bot: Bot):
+    ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    # Безпечне розділення команди і тексту
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("⚠️ Помилка. Використання: `/broadcast Ваш текст`", parse_mode="Markdown")
+        return
+
+    broadcast_text = f"📢 **Оголошення:**\n\n{parts[1]}"
+
+    users = await db.get_all_users()
+    count = 0
+
+    await message.answer(f"⏳ Починаю розсилку на {len(users)} користувачів...")
+
+    for user_id in users:
+        try:
+            await bot.send_message(user_id, broadcast_text, parse_mode="Markdown")
+            count += 1
+            await asyncio.sleep(0.05) # Анти-спам пауза
+        except Exception:
+            pass  # Ігноруємо помилки (наприклад, юзер заблокував бота)
+
+    await message.answer(f"✅ Розсилка завершена! Успішно отримали: {count}")
 
 # --- ЗАПУСК ---
 async def main():
@@ -670,40 +961,14 @@ async def main():
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(send_daily_quote, trigger="cron", hour=7, minute=30, kwargs={"bot": bot})
-    scheduler.add_job(clear_expired_codes, "interval", hours=12)
+    # Чистка кодів щогодини, щоб не накопичувати сміття
+    scheduler.add_job(clear_expired_codes, "interval", hours=3)
     scheduler.start()
 
     try:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
-
-# --- ФІДБЕК ---
-@dp.callback_query(F.data == "send_feedback")
-async def start_feedback(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("✉️ Напиши відгук:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Скасувати", callback_data="back_home")]]))
-    await state.set_state(FeedbackState.waiting_for_message)
-    await callback.answer()
-
-@dp.message(FeedbackState.waiting_for_message)
-async def process_feedback(message: types.Message, state: FSMContext, bot: Bot):
-    ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
-    try:
-        await bot.send_message(ADMIN_ID, f"📨 Відгук від {message.from_user.first_name}:\n{message.text}")
-        await message.answer("✅ Відправлено!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]]))
-    except: await message.answer("Помилка.")
-    await state.clear()
-
-@dp.message(Command("broadcast"))
-async def cmd_broadcast(message: types.Message, bot: Bot):
-    if message.from_user.id != int(os.getenv("ADMIN_ID", 0)): return
-    text = message.text.replace("/broadcast ", "")
-    users = await db.get_all_users()
-    for uid in users:
-        try: await bot.send_message(uid, f"📢 **Оголошення:**\n\n{text}", parse_mode="Markdown")
-        except: pass
-        await asyncio.sleep(0.05)
-    await message.answer("✅ Розсилка завершена!")
 
 if __name__ == "__main__":
     asyncio.run(main())
