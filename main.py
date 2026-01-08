@@ -451,14 +451,36 @@ async def process_birthdate(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "mode_gym")
 async def start_gym(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    # Оновлюємо ім'я при вході в гру
     await db.add_user(user_id, callback.from_user.first_name)
+
+    # Отримуємо поточний прогрес
     score, level, _ = await db.get_stats(user_id)
+    
+    # Визначаємо режим гри для заголовка
+    max_scenarios = len(SCENARIOS)
+    if level <= max_scenarios:
+        mode_title = f"📖 Сюжетний режим ({level}/{max_scenarios})"
+    else:
+        mode_title = f"♾️ Бескінечний режим (Рівень {level})"
+
     builder = InlineKeyboardBuilder()
     builder.button(text="▶️ Продовжити тренування", callback_data="game_start")
-    if level > 1 or score > 0: builder.button(text="🔄 Почати заново", callback_data="reset_gym_confirm")
+
+    if level > 1 or score > 0:  # Показуємо кнопку, тільки якщо є прогрес
+        builder.button(text="🔄 Почати заново", callback_data="reset_gym_confirm")
+
     builder.button(text="🔙 В меню", callback_data="back_home")
+
     builder.adjust(1)
-    await callback.message.edit_text(f"⚔️ **Stoic Gym | Рівень {level}**\n🏆 Рахунок: **{score}**", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await callback.message.edit_text(
+        f"⚔️ **Stoic Gym**\n"
+        f"📍 {mode_title}\n\n" 
+        f"🏆 Твій рахунок: **{score}** балів\n\n"
+        "Продовжуй свій шлях до мудрості.",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown",
+    )
     await callback.answer()
 
 @dp.callback_query(F.data == "game_start")
@@ -568,11 +590,10 @@ async def send_level(user_id, message_to_edit):
     energy = await db.check_energy(user_id)
     max_scenarios = len(SCENARIOS)
 
-    # 2. ПЕРЕВІРКА ЕНЕРГІЇ І ПІДСУМОК ДНЯ
+    # 2. ПЕРЕВІРКА ЕНЕРГІЇ
     if energy <= 0:
         summary = await db.get_daily_summary(user_id)
         
-        # Логіка рефлексії (фідбек залежно від результатів)
         if summary and summary["points"] != 0:
             if summary["mistakes"] == 0:
                 feedback = "🌟 **Бездоганний день!** Твій розум був гострим, як меч."
@@ -606,18 +627,18 @@ async def send_level(user_id, message_to_edit):
         )
         return
 
-    # 3. ВИБІР СЦЕНАРІЮ (Linear vs Endless)
+    # 3. ВИБІР СЦЕНАРІЮ ТА ЗАГОЛОВКА (Linear vs Endless)
     if current_level <= max_scenarios:
         target_scenario_id = current_level
-        header = f"🛡️ **Рівень {current_level}/{max_scenarios}**"
+        # Чіткий заголовок для сюжету
+        header = f"📖 **Сюжет | Ситуація {current_level}/{max_scenarios}**"
     else:
-        # Якщо рівні закінчилися - вмикаємо нескінченний режим (рандом)
         target_scenario_id = random.randint(1, max_scenarios)
-        header = f"♾️ **Шлях Мудреця | Рівень {current_level}**"
+        # Чіткий заголовок для бескінечного режиму
+        header = f"♾️ **Бескінечний режим | Рівень {current_level}**"
 
     scenario_data = SCENARIOS.get(target_scenario_id)
     
-    # ПЕРЕВІРКА: чи існує сценарій, ПЕРЕД ТИМ як списувати енергію
     if not scenario_data:
         await message_to_edit.edit_text(
             "📜 Архів порожній. Повернись пізніше.", 
@@ -625,7 +646,7 @@ async def send_level(user_id, message_to_edit):
         )
         return
 
-    # 🟢 СПИСУЄМО ЕНЕРГІЮ ТІЛЬКИ ТУТ (коли сценарій точно є)
+    # СПИСУЄМО ЕНЕРГІЮ
     await db.decrease_energy(user_id)
     new_energy = energy - 1 
 
@@ -638,13 +659,12 @@ async def send_level(user_id, message_to_edit):
     text_opts = ""
 
     for i, opt in enumerate(options):
-        # Якщо варіантів більше ніж літер, використовуємо цифри
         lbl = labels[i] if i < len(labels) else str(i+1)
         text_opts += f"**{lbl})** {opt['text']}\n\n"
         builder.button(text=f"🔹 {lbl}", callback_data=f"anygame_{target_scenario_id}_{opt['id']}")
 
     builder.button(text="🔙 В меню", callback_data="back_home")
-    builder.adjust(2, 2, 1) # Кнопки відповідей по 2 в ряд, "В меню" - одна знизу
+    builder.adjust(2, 2, 1)
 
     await message_to_edit.edit_text(
         f"{header} | ⚡ {new_energy}/5\n\n"
