@@ -4,7 +4,8 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
@@ -59,6 +60,26 @@ async def lifespan(app: FastAPI):
     await db.create_progress_table()
     await db.create_lab_tables()
     yield
+    
+# --- БЕЗПЕКА: API KEY ---
+API_KEY_NAME = "X-App-Token" # Назва заголовка, який ми будемо шукати
+API_KEY = os.getenv("APP_SECRET_KEY") # Секретний ключ з .env
+
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def verify_app_token(api_key_header: str = Security(api_key_header)):
+    # Якщо ключа немає в .env (локальний запуск без налаштувань) - пропускаємо (або блокуємо)
+    if not API_KEY:
+        return True 
+        
+    if api_key_header == API_KEY:
+        return api_key_header
+    
+    # Якщо ключ не співпав або відсутній - викидаємо 403 помилку
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Could not validate credentials"
+    )
 
 app = FastAPI(title="Stoic Trainer API", lifespan=lifespan)
 
@@ -74,7 +95,8 @@ if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-api_router = APIRouter(prefix="/api")
+# Тепер всі запити до /api/... будуть проходити через verify_app_token
+api_router = APIRouter(prefix="/api", dependencies=[Depends(verify_app_token)])
 
 # --- ЕНДПОІНТИ ЗАГАЛЬНІ ---
 
