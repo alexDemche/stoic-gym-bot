@@ -2,6 +2,13 @@ import os
 import random
 from datetime import datetime
 from contextlib import asynccontextmanager
+from constants import (
+    ACADEMY_REWARD,
+    LAB_POINTS_PER_MINUTE, 
+    LAB_MAX_POINTS_PER_SESSION, 
+    LAB_MIN_SECONDS,
+    LAB_DAILY_POINTS_LIMIT
+)
 
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Security, status
@@ -37,12 +44,12 @@ class GuestRequest(BaseModel):
 class AcademyReadRequest(BaseModel):
     # user_id прибрали!
     article_id: int
-    score: int
+    # score: int
 
-class LabComplete(BaseModel):
+class LabCompleteRequest(BaseModel):
     # user_id прибрали!
     practice_type: str
-    score: int
+    duration_seconds: int
 
 class SyncRequest(BaseModel):
     code: str
@@ -246,7 +253,7 @@ async def submit_gym_answer(
         raise HTTPException(status_code=403, detail="Енергія вичерпана")
 
     new_score = current_score + data.score
-    new_level = db_level + 1 
+    new_level = db_level + 1
     
     await db.update_game_progress(user_id, new_score, new_level)
     await db.decrease_energy(user_id)
@@ -288,18 +295,33 @@ async def check_article(article_id: int, user_id: int = Depends(get_current_user
     is_read = await db.is_article_read(user_id, article_id)
     return {"is_read": is_read}
 
+# --- api_main.py ---
+
+# 1. Оновлюємо модель (прибираємо score)
+class AcademyReadRequest(BaseModel):
+    article_id: int
+    # score: int  <-- ВИДАЛЯЄМО ЦЕ ПОЛЕ. Фронт не повинен ним керувати.
+
+# 2. Оновлюємо ендпоінт
 @api_router.post("/academy/complete")
 async def complete_lesson(
     req: AcademyReadRequest, 
     user_id: int = Depends(get_current_user)
 ):
+    
     daily_count = await db.get_daily_academy_count(user_id)
     if daily_count >= 5: 
         return {"success": False, "error": "limit_reached"}
     
-    is_new = await db.mark_article_as_read(user_id, req.article_id, score=req.score)
-    
-    return {"success": True, "is_new": is_new, "added_score": req.score if is_new else 0}
+    # Передаємо наше фіксоване значення винагороди
+    is_new, new_total_score = await db.mark_article_as_read(user_id, req.article_id, score=ACADEMY_REWARD)
+
+    return {
+        "success": True, 
+        "is_new": is_new, 
+        "new_score": new_total_score, # Віддаємо новий загальний рахунок
+        "reward": ACADEMY_REWARD if is_new else 0 # Повідомляємо, скільки нарахували
+    }
 
 # --- ЩОДЕННИК ---
 
@@ -325,7 +347,7 @@ async def delete_journal_entry(entry_id: int, user_id: int = Depends(get_current
 
 # --- ШІ МЕНТОР ---
 
-@api_router.get("/mentor/history") # Прибрав {user_id}
+@api_router.get("/mentor/history")
 async def get_mentor_history(user_id: int = Depends(get_current_user)):
     entries = await db.get_mentor_history(user_id)
     return [dict(e) for e in entries]
@@ -386,11 +408,51 @@ async def mentor_chat(
 
 @api_router.post("/lab/complete")
 async def complete_lab_practice(
-    req: LabComplete, 
+    req: LabCompleteRequest, 
     user_id: int = Depends(get_current_user)
 ):
-    new_score = await db.save_lab_practice(user_id, req.practice_type, req.score)
-    return {"status": "success", "added_score": req.score, "total_score": new_score}
+    # 1. Відсіюємо випадкові кліки (надто короткі)
+    if req.duration_seconds < LAB_MIN_SECONDS:
+        return {"success": False, "error": "too_short", "message": "Практика занадто коротка"}
+
+    # 2. Рахуємо чесні бали за час
+    minutes = req.duration_seconds // 60
+    calculated_score = minutes * LAB_POINTS_PER_MINUTE
+    
+    # Бонус: якщо менше хвилини, але більше 30 сек — даємо 1 бал заохочення
+    if calculated_score < 1 and req.duration_seconds >= LAB_MIN_SECONDS:
+        calculated_score = 1
+
+    # 3. Обрізаємо аномально довгі сесії (макс 10 балів за раз)
+    session_score = min(calculated_score, LAB_MAX_POINTS_PER_SESSION)
+
+    # --- 🛑 ЗАХИСТ ВІД СПАМУ (Денний ліміт) ---
+    today_score = await db.get_today_lab_points(user_id)
+    
+    if today_score >= LAB_DAILY_POINTS_LIMIT:
+        # Ліміт вичерпано.
+        # Можна повернути помилку, або записати практику з 0 балів (щоб зберегти статистику в історії, але не дати балів)
+        session_score = 0
+        # return {"success": False, "message": "Денний ліміт балів вичерпано!"} <--- Або так, якщо хочеш помилку
+
+    # Коригування "хвоста": Якщо ліміт 50, вже є 48, а заробив 5 -> даємо тільки 2.
+    elif today_score + session_score > LAB_DAILY_POINTS_LIMIT:
+        session_score = LAB_DAILY_POINTS_LIMIT - today_score
+
+    # 4. Зберігаємо (тільки якщо є що зберігати або треба записати факт історії)
+    if session_score > 0:
+        new_total_score = await db.save_lab_practice(user_id, req.practice_type, session_score)
+    else:
+        # Якщо балів 0, просто отримуємо поточний рахунок, щоб не поламати фронт
+        # (можна викликати легкий SELECT або взяти з кешу, тут приклад через SELECT)
+        data = await db.pool.fetchrow("SELECT score FROM users WHERE user_id = $1", user_id)
+        new_total_score = data['score']
+
+    return {
+        "success": True, 
+        "added_score": session_score, 
+        "total_score": new_total_score
+    }
 
 
 # --- ВИДАЛЕННЯ АКАУНТА ---

@@ -4,6 +4,7 @@ import os
 import random
 from datetime import datetime
 from urllib.parse import quote
+from constants import ACADEMY_REWARD
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram import html
@@ -196,7 +197,7 @@ async def cmd_sync(message: types.Message):
         "🔐 **Синхронізація з додатком**\n\n"
         f"Твій тимчасовий код: `{code}`\n\n"
         "⏳ Код діє **10 хвилин**.\n"
-        "Введи його в мобільному додатку Stoic Academy, щоб перенести свій прогрес."
+        "Введи його в мобільному додатку Stoic Trainer, щоб перенести свій прогрес."
     )
     await message.answer(text, parse_mode="Markdown")
 
@@ -205,13 +206,17 @@ async def cmd_sync(message: types.Message):
 async def render_article(callback: types.CallbackQuery, article, user_id):
     is_read = await db.is_article_read(user_id, article["id"])
     daily_count = await db.get_daily_academy_count(user_id)
+    
     full_text = format_article(article)
     limit_info = f"\n\n📊 Сьогодні засвоєно: **{daily_count}/5** уроків."
     final_text = full_text + limit_info
+    
     if len(final_text) > 4000:
         final_text = final_text[:3990] + "...\n\n*(Текст скорочено через ліміти Telegram)*"
 
     kb = InlineKeyboardBuilder()
+    
+    # Логіка кнопок
     if daily_count >= 5 and not is_read:
         next_callback = "academy_limit_reached"
         next_text = "➡️ (Відпочинок)"
@@ -222,7 +227,8 @@ async def render_article(callback: types.CallbackQuery, article, user_id):
     if is_read:
         kb.button(text="🌟 Вже вивчено", callback_data="academy_already_done")
     else:
-        kb.button(text="Зарахувати урок (+1 бал)", callback_data=f"academy_read_{article['id']}")
+        # ЗМІНА 1: Пишемо правильну нагороду (+5 балів)
+        kb.button(text="Зарахувати урок (+5 балів)", callback_data=f"academy_read_{article['id']}")
 
     kb.button(text="⬅️ Минулий", callback_data=f"academy_nav_prev_{article['day']}_{article['month']}")
     kb.button(text=next_text, callback_data=next_callback)
@@ -260,6 +266,7 @@ async def navigate_academy(callback: types.CallbackQuery):
             new_date = current_date + timedelta(days=1)
         else:
             new_date = current_date - timedelta(days=1)
+        
         article = await db.get_article_by_date(new_date.day, new_date.month)
         if article:
             await render_article(callback, article, callback.from_user.id)
@@ -272,7 +279,7 @@ async def navigate_academy(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "academy_already_done")
 async def handle_already_read(callback: types.CallbackQuery):
-    await callback.answer("Ти вже засвоїв цей урок!", show_alert=False)
+    await callback.answer("Ти вже засвоїв цей урок! 🤝", show_alert=False)
 
 
 @dp.callback_query(F.data == "academy_limit_reached")
@@ -280,25 +287,45 @@ async def handle_limit_reached_nav(callback: types.CallbackQuery):
     await callback.answer("Ти засвоїв 5 уроків сьогодні!\n\n Відпочинь, і завтра продовжимо! 🏛️", show_alert=True)
 
 
+# 👇 ГОЛОВНІ ЗМІНИ ТУТ
 @dp.callback_query(F.data.startswith("academy_read_"))
 async def handle_read_article(callback: types.CallbackQuery):
     article_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
+    
+    # 1. Перевірка ліміту
     daily_count = await db.get_daily_academy_count(user_id)
     if daily_count >= 5:
         await handle_limit_reached_nav(callback)
         return
-    is_new = await db.mark_article_as_read(user_id, article_id)
+
+    # 2. ЗМІНА 2: Отримуємо (статус, новий_рахунок)
+    # db.py за замовчуванням дає 2 бали, тому тут score передавати не треба
+    is_new, new_total_score = await db.mark_article_as_read(user_id, article_id)
+    
     article = await db.get_article_by_id(article_id)
+
     if article:
+        # Отримуємо прогрес для статистики
         new_count, rank = await db.get_academy_progress(user_id)
         new_daily = await db.get_daily_academy_count(user_id)
+        
+        # Оновлюємо сторінку (кнопка зміниться на "Вже вивчено")
         await render_article(callback, article, user_id)
+        
         if is_new:
-            await callback.answer(f"🎉 Урок зараховано!\nВсього: {new_count}\nЗа сьогодні: {new_daily}/5", show_alert=True)
+            # 3. Показуємо красиве повідомлення з новим рахунком
+            await callback.answer(
+                f"🎉 Урок зараховано! (+{ACADEMY_REWARD} балів\n"
+                f"🏆 Рахунок: {new_total_score}\n"
+                f"📅 Сьогодні: {new_daily}/5", 
+                show_alert=True
+            )
+        else:
+            # На випадок розсинхрону
+             await callback.answer("Урок вже був у твоїй бібліотеці.", show_alert=True)
     else:
         await callback.answer("Помилка: статті немає.")
-
 
 # --- БІБЛІОТЕКА ---
 @dp.callback_query(F.data.startswith("library_page_"))
@@ -897,6 +924,28 @@ async def process_ai_chat(message: types.Message, state: FSMContext, bot: Bot):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Завершити", callback_data="back_home")]]),
     )
+
+# Команда /help
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    # Використовуємо змінну з data.py
+    await message.answer(HELP_TEXT, parse_mode="Markdown")
+
+
+# хендлер, який буде ловити callback_data="show_help"
+@dp.callback_query(F.data == "show_help")
+async def show_help_callback(callback: types.CallbackQuery):
+    # Використовуємо змінну з data.py
+    await callback.message.edit_text(
+        HELP_TEXT,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В меню", callback_data="back_home")]
+            ]
+        ),
+        parse_mode="Markdown",
+    )
+    await callback.answer()
 
 # --- ФІДБЕК ---
 @dp.callback_query(F.data == "send_feedback")

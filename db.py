@@ -1,6 +1,7 @@
 import os
 import uuid
 from datetime import datetime
+from constants import ACADEMY_REWARD
 
 import asyncpg
 from dotenv import load_dotenv
@@ -438,14 +439,15 @@ class Database:
             """
             )
 
-    async def mark_article_as_read(self, user_id, article_id, score=0):
+    async def mark_article_as_read(self, user_id, article_id, score=ACADEMY_REWARD):
         """
-        Позначає статтю як прочитану. 
-        Якщо це вперше (is_new) і передано score > 0, автоматично нараховує бали юзеру.
+        Позначає статтю як прочитану.
+        Повертає кортеж: (is_new: bool, new_total_score: int)
         """
         async with self.pool.acquire() as conn:
-            async with conn.transaction(): # Починаємо транзакцію (все або нічого)
-                # 1. Пробуємо записати прогрес
+            async with conn.transaction():
+                # 1. Пробуємо вставити запис у прогрес
+                # ON CONFLICT DO NOTHING гарантує, що ми не додамо дублікат
                 result = await conn.execute(
                     """
                     INSERT INTO user_academy_progress (user_id, article_id)
@@ -455,17 +457,25 @@ class Database:
                     article_id,
                 )
                 
-                # "INSERT 0 1" означає, що рядок додався (раніше не читав)
+                # Якщо "INSERT 0 1" — значить вставили (стаття нова). 
+                # Якщо "INSERT 0 0" — значить вже була.
                 is_new = (result == "INSERT 0 1")
 
-                # 2. Якщо стаття нова і є бали — оновлюємо рахунок користувача
+                # 2. Оновлюємо або отримуємо рахунок
                 if is_new and score > 0:
-                    await conn.execute(
-                        "UPDATE users SET score = score + $1 WHERE user_id = $2",
+                    # Якщо стаття нова -> додаємо бали і одразу отримуємо нову суму
+                    new_total_score = await conn.fetchval(
+                        "UPDATE users SET score = score + $1 WHERE user_id = $2 RETURNING score",
                         score, user_id
                     )
+                else:
+                    # Якщо стаття стара (або балів 0) -> просто беремо поточний рахунок без змін
+                    new_total_score = await conn.fetchval(
+                        "SELECT score FROM users WHERE user_id = $1", 
+                        user_id
+                    )
                 
-                return is_new
+                return is_new, new_total_score
 
     async def get_academy_progress(self, user_id):
         """Повертає кількість прочитаних статей та шкільний клас"""
@@ -632,6 +642,19 @@ class Database:
                 # Повертаємо новий рахунок
                 new_score = await conn.fetchval("SELECT score FROM users WHERE user_id = $1", user_id)
                 return new_score
+            
+    async def get_today_lab_points(self, user_id: int) -> int:
+        """Рахує суму score_earned за сьогоднішню дату"""
+        async with self.pool.acquire() as conn:
+            total = await conn.fetchval(
+                """
+                SELECT SUM(score_earned) FROM lab_history 
+                WHERE user_id = $1 AND completed_at::date = CURRENT_DATE
+                """,
+                user_id
+            )
+            # Якщо записів немає, total буде None. Повертаємо 0.
+            return total if total else 0
 
     async def get_random_quote(self):
         async with self.pool.acquire() as conn:
