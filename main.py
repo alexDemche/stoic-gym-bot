@@ -316,7 +316,7 @@ async def handle_read_article(callback: types.CallbackQuery):
         if is_new:
             # 3. Показуємо красиве повідомлення з новим рахунком
             await callback.answer(
-                f"🎉 Урок зараховано! (+{ACADEMY_REWARD} балів\n"
+                f"🎉 Урок зараховано! (+{ACADEMY_REWARD}) балів\n"
                 f"🏆 Рахунок: {new_total_score}\n"
                 f"📅 Сьогодні: {new_daily}/5", 
                 show_alert=True

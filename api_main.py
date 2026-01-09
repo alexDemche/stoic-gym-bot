@@ -132,6 +132,7 @@ async def get_leaderboard(limit: int = 20):
     return [
         {
             # Тут user_id можна показувати (це публічний топ), або приховати
+            "user_id": user["user_id"],
             "username": user["username"] or "Мандрівник",
             "score": user["score"],
             "rank_name": get_stoic_rank(user["score"]),
