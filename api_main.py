@@ -280,6 +280,28 @@ async def get_articles(limit: int = 50, offset: int = 0, user_id: int = Depends(
     async with db.pool.acquire() as conn:
         rows = await conn.fetch("SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2", limit, offset)
         return [dict(row) for row in rows]
+    
+# Тільки урок на сьогодні
+@api_router.get("/academy/today")
+async def get_today_article(user_id: int = Depends(get_current_user)):
+    now = datetime.now()
+    # Отримуємо поточний день і місяць
+    current_day = now.day
+    current_month = now.month
+    
+    async with db.pool.acquire() as conn:
+        # Шукаємо статтю конкретно під цю дату
+        row = await conn.fetchrow(
+            "SELECT id, day, month, title, content, reflection FROM academy_articles WHERE day = $1 AND month = $2", 
+            current_day, current_month
+        )
+        
+        if row:
+            return dict(row)
+        else:
+            # Fallback: якщо на 29 лютого немає статті, або база неповна, повертаємо статтю №1
+            row = await conn.fetchrow("SELECT id, day, month, title, content, reflection FROM academy_articles WHERE id = 1")
+            return dict(row) if row else None
 
 @api_router.get("/academy/articles/{article_id}")
 async def get_article_detail(article_id: int, user_id: int = Depends(get_current_user)):
