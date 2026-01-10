@@ -702,33 +702,33 @@ class Database:
             return dict(row) if row else None
 
     async def get_scenario_by_level(self, level: int, lang: str = "ua"):
-    async with self.pool.acquire() as conn:
-        # Вибираємо колонку залежно від мови
-        text_col = "text_en" if lang == "en" else "text"
-        
-        scenario = await conn.fetchrow(
-            f"SELECT id, {text_col} as text FROM scenarios WHERE id = $1", 
-            level
-        )
-        if not scenario: return None
+        async with self.pool.acquire() as conn:
+            # Вибираємо колонку залежно від мови
+            text_col = "text_en" if lang == "en" else "text"
+            
+            scenario = await conn.fetchrow(
+                f"SELECT id, {text_col} as text FROM scenarios WHERE id = $1", 
+                level
+            )
+            if not scenario: return None
 
-        # Для опцій робимо так само
-        opt_text_col = "text_en" if lang == "en" else "text"
-        opt_msg_col = "msg_en" if lang == "en" else "msg"
-        
-        options = await conn.fetch(
-            f"""SELECT option_id as id, {opt_text_col} as text, 
-                score, {opt_msg_col} as msg 
-                FROM scenario_options WHERE scenario_id = $1 
-                ORDER BY id ASC""",
-            scenario["id"],
-        )
+            # Для опцій робимо так само
+            opt_text_col = "text_en" if lang == "en" else "text"
+            opt_msg_col = "msg_en" if lang == "en" else "msg"
+            
+            options = await conn.fetch(
+                f"""SELECT option_id as id, {opt_text_col} as text, 
+                    score, {opt_msg_col} as msg 
+                    FROM scenario_options WHERE scenario_id = $1 
+                    ORDER BY id ASC""",
+                scenario["id"],
+            )
 
-        return {
-            "id": scenario["id"],
-            "text": scenario["text"], # Ключ залишився старим, а дані — англійські!
-            "options": [dict(opt) for opt in options],
-        }
+            return {
+                "id": scenario["id"],
+                "text": scenario["text"], # Ключ залишився старим, а дані — англійські!
+                "options": [dict(opt) for opt in options],
+            }
             
     async def get_scenarios_count(self):
         """Повертає загальну кількість сценаріїв у базі"""
