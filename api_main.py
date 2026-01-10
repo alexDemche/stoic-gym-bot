@@ -225,7 +225,7 @@ async def get_user_stats(user_id: int = Depends(get_current_user)):
 # --- STOIC GYM ---
 
 @api_router.get("/gym/scenario")
-async def get_next_gym_scenario(user_id: int = Depends(get_current_user)):
+async def get_next_gym_scenario(lang: str = "ua", user_id: int = Depends(get_current_user)):
     energy = await db.check_energy(user_id)
     if energy <= 0:
         summary = await db.get_daily_summary(user_id)
@@ -234,7 +234,10 @@ async def get_next_gym_scenario(user_id: int = Depends(get_current_user)):
     score, level, _ = await db.get_stats(user_id)
     max_scenarios = await db.get_scenarios_count()
     target_id = level if level <= max_scenarios else random.randint(1, max_scenarios)
-    scenario = await db.get_scenario_by_level(target_id)
+    
+    # Викликаємо метод БД, передаючи параметр мови
+    scenario = await db.get_scenario_by_level(target_id, lang=lang)
+    
     if not scenario:
         raise HTTPException(status_code=404, detail="Сценарій не знайдено")
     return {"scenario": scenario, "energy": energy, "level": level, "is_endless": level > max_scenarios}
@@ -269,44 +272,37 @@ async def submit_gym_answer(
 
 # --- АКАДЕМІЯ ---
 
-@api_router.get("/academy/status") # Прибрав {user_id}
-async def get_academy_status(user_id: int = Depends(get_current_user)):
+@api_router.get("/academy/status")
+async def get_academy_status(lang: str = "ua", user_id: int = Depends(get_current_user)):
     count, rank = await db.get_academy_progress(user_id)
     daily_count = await db.get_daily_academy_count(user_id)
     return {"total_learned": count, "rank": rank, "daily_count": daily_count, "can_learn_more": daily_count < 5}
 
 @api_router.get("/academy/articles")
-async def get_articles(limit: int = 50, offset: int = 0, user_id: int = Depends(get_current_user)):
+async def get_articles(limit: int = 50, offset: int = 0, lang: str = "ua", user_id: int = Depends(get_current_user)):
+    # Використовуємо динамічний вибір колонки заголовка
     async with db.pool.acquire() as conn:
-        rows = await conn.fetch("SELECT id, day, month, title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2", limit, offset)
+        t_col = "title_en" if lang == "en" else "title"
+        rows = await conn.fetch(
+            f"SELECT id, day, month, {t_col} as title FROM academy_articles ORDER BY month, day LIMIT $1 OFFSET $2", 
+            limit, offset
+        )
         return [dict(row) for row in rows]
     
 # Тільки урок на сьогодні
 @api_router.get("/academy/today")
-async def get_today_article(user_id: int = Depends(get_current_user)):
-    now = datetime.now()
-    # Отримуємо поточний день і місяць
-    current_day = now.day
-    current_month = now.month
-    
-    async with db.pool.acquire() as conn:
-        # Шукаємо статтю конкретно під цю дату
-        row = await conn.fetchrow(
-            "SELECT id, day, month, title, content, reflection FROM academy_articles WHERE day = $1 AND month = $2", 
-            current_day, current_month
-        )
-        
-        if row:
-            return dict(row)
-        else:
-            # Fallback: якщо на 29 лютого немає статті, або база неповна, повертаємо статтю №1
-            row = await conn.fetchrow("SELECT id, day, month, title, content, reflection FROM academy_articles WHERE id = 1")
-            return dict(row) if row else None
+async def get_today_article(lang: str = "ua", user_id: int = Depends(get_current_user)):
+    # Використовуємо новий метод з db.py, який має логіку дати, мови та fallback
+    article = await db.get_today_article(lang=lang)
+    if not article:
+        raise HTTPException(status_code=404, detail="Статтю не знайдено")
+    return article
 
 @api_router.get("/academy/articles/{article_id}")
-async def get_article_detail(article_id: int, user_id: int = Depends(get_current_user)):
-    article = await db.get_article_by_id(article_id)
-    if not article: raise HTTPException(status_code=404, detail="Статтю не знайдено")
+async def get_article_detail(article_id: int, lang: str = "ua", user_id: int = Depends(get_current_user)):
+    article = await db.get_article_by_id(article_id, lang=lang)
+    if not article: 
+        raise HTTPException(status_code=404, detail="Статтю не знайдено")
     return article
 
 @api_router.get("/academy/library") # Прибрав {user_id}

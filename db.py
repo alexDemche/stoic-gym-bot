@@ -399,14 +399,20 @@ class Database:
                 # Якщо констрейнт вже існує, база видасть помилку, ми її ігноруємо
                 pass
 
-    async def get_article_by_date(self, day: int, month: int):
-        """Отримує статтю на конкретну дату"""
+    async def get_article_by_date(self, day: int, month: int, lang: str = "ua"):
+        """Отримує статтю на конкретну дату вибраною мовою"""
+        # Визначаємо колонки
+        t_col = "title_en" if lang == "en" else "title"
+        c_col = "content_en" if lang == "en" else "content"
+        r_col = "reflection_en" if lang == "en" else "reflection"
+
         async with self.pool.acquire() as conn:
-            return await conn.fetchrow(
-                "SELECT * FROM academy_articles WHERE day = $1 AND month = $2",
-                day,
-                month,
+            row = await conn.fetchrow(
+                f"SELECT id, day, month, {t_col} as title, {c_col} as content, {r_col} as reflection "
+                f"FROM academy_articles WHERE day = $1 AND month = $2",
+                day, month,
             )
+            return dict(row) if row else None
 
     # Метод для додавання статті (знадобиться для наповнення)
     async def add_academy_article(self, day, month, title, content, reflection):
@@ -477,41 +483,39 @@ class Database:
                 
                 return is_new, new_total_score
 
-    async def get_academy_progress(self, user_id):
-        """Повертає кількість прочитаних статей та шкільний клас"""
+    async def get_academy_progress(self, user_id: int, lang: str = "ua"):
+        """Повертає кількість прочитаних статей та локалізований шкільний клас"""
         async with self.pool.acquire() as conn:
             count = await conn.fetchval(
                 "SELECT COUNT(*) FROM user_academy_progress WHERE user_id = $1", user_id
             )
 
-            # Система 11 класів
-            # Перші класи — швидкий прогрес, далі — складніше
             if count < 1:
-                rank = "👶 Дошкільня (Ще не почав)"
+                rank = "👶 Preschooler (Not started)" if lang == "en" else "👶 Дошкільня (Ще не почав)"
             elif count < 5:
-                rank = "1️⃣ 1-й Клас (Новачок)"
+                rank = "1️⃣ Grade 1 (Novice)" if lang == "en" else "1️⃣ 1-й Клас (Новачок)"
             elif count < 10:
-                rank = "2️⃣ 2-й Клас (Допитливий)"
+                rank = "2️⃣ Grade 2 (Curious)" if lang == "en" else "2️⃣ 2-й Клас (Допитливий)"
             elif count < 20:
-                rank = "3️⃣ 3-й Клас (Слухач)"
+                rank = "3️⃣ Grade 3 (Listener)" if lang == "en" else "3️⃣ 3-й Клас (Слухач)"
             elif count < 35:
-                rank = "4️⃣ 4-й Клас (Молодший учень)"  # Випуск з початкової школи
+                rank = "4️⃣ Grade 4 (Junior Student)" if lang == "en" else "4️⃣ 4-й Клас (Молодший учень)"
             elif count < 50:
-                rank = "5️⃣ 5-й Клас (Дослідник)"
+                rank = "5️⃣ Grade 5 (Explorer)" if lang == "en" else "5️⃣ 5-й Клас (Дослідник)"
             elif count < 70:
-                rank = "6️⃣ 6-й Клас (Практик)"
+                rank = "6️⃣ Grade 6 (Practitioner)" if lang == "en" else "6️⃣ 6-й Клас (Практик)"
             elif count < 100:
-                rank = "7️⃣ 7-й Клас (Логік)"
+                rank = "7️⃣ Grade 7 (Logician)" if lang == "en" else "7️⃣ 7-й Клас (Логік)"
             elif count < 150:
-                rank = "8️⃣ 8-й Клас (Аналітик)"
+                rank = "8️⃣ Grade 8 (Analyst)" if lang == "en" else "8️⃣ 8-й Клас (Аналітик)"
             elif count < 200:
-                rank = "9️⃣ 9-й Клас (Гімназист)"  # Неповна середня
+                rank = "9️⃣ Grade 9 (Gymnasist)" if lang == "en" else "9️⃣ 9-й Клас (Гімназист)"
             elif count < 300:
-                rank = "🔟 10-й Клас (Філософ)"
+                rank = "🔟 Grade 10 (Philosopher)" if lang == "en" else "🔟 10-й Клас (Філософ)"
             elif count < 365:
-                rank = "1️⃣1️⃣ 11-й Клас (Випускник)"
+                rank = "1️⃣1️⃣ Grade 11 (Graduate)" if lang == "en" else "1️⃣1️⃣ 11-й Клас (Випускник)"
             else:
-                rank = "🎓 Магістр Стоїцизму (Університет)"  # Якщо пройде весь рік
+                rank = "🎓 Master of Stoicism (University)" if lang == "en" else "🎓 Магістр Стоїцизму (Університет)"
 
             return count, rank
 
@@ -536,12 +540,46 @@ class Database:
                 user_id,
             )
 
-    async def get_article_by_id(self, article_id):
-        """Отримує статтю за її унікальним ID"""
+    async def get_article_by_id(self, article_id: int, lang: str = "ua"):
+        """Отримує статтю за ID вибраною мовою"""
+        t_col = "title_en" if lang == "en" else "title"
+        c_col = "content_en" if lang == "en" else "content"
+        r_col = "reflection_en" if lang == "en" else "reflection"
+
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM academy_articles WHERE id = $1", article_id
+                f"SELECT id, day, month, {t_col} as title, {c_col} as content, {r_col} as reflection "
+                f"FROM academy_articles WHERE id = $1", 
+                article_id
             )
+            return dict(row) if row else None
+        
+    async def get_today_article(self, lang: str = "ua"):
+        """Отримує статтю на сьогодні з підтримкою мови та fallback на ID=1"""
+        now = datetime.now()
+        current_day = now.day
+        current_month = now.month
+        
+        # Визначаємо колонки
+        t_col = "title_en" if lang == "en" else "title"
+        c_col = "content_en" if lang == "en" else "content"
+        r_col = "reflection_en" if lang == "en" else "reflection"
+
+        async with self.pool.acquire() as conn:
+            # Спроба знайти статтю на сьогодні
+            row = await conn.fetchrow(
+                f"SELECT id, day, month, {t_col} as title, {c_col} as content, {r_col} as reflection "
+                f"FROM academy_articles WHERE day = $1 AND month = $2",
+                current_day, current_month
+            )
+            
+            if not row:
+                # Fallback на статтю №1
+                row = await conn.fetchrow(
+                    f"SELECT id, day, month, {t_col} as title, {c_col} as content, {r_col} as reflection "
+                    f"FROM academy_articles WHERE id = 1"
+                )
+            
             return dict(row) if row else None
 
     async def get_user_library(self, user_id, limit=5, offset=0):
@@ -663,26 +701,34 @@ class Database:
             )
             return dict(row) if row else None
 
-    async def get_scenario_by_level(self, level: int):
-        async with self.pool.acquire() as conn:
-            # 1. Отримуємо текст сценарію
-            scenario = await conn.fetchrow(
-                "SELECT id, text FROM scenarios WHERE id = $1", level
-            )
-            if not scenario:
-                return None
+    async def get_scenario_by_level(self, level: int, lang: str = "ua"):
+    async with self.pool.acquire() as conn:
+        # Вибираємо колонку залежно від мови
+        text_col = "text_en" if lang == "en" else "text"
+        
+        scenario = await conn.fetchrow(
+            f"SELECT id, {text_col} as text FROM scenarios WHERE id = $1", 
+            level
+        )
+        if not scenario: return None
 
-            # 2. Отримуємо варіанти відповідей
-            options = await conn.fetch(
-                "SELECT option_id as id, text, score, msg FROM scenario_options WHERE scenario_id = $1 ORDER BY id ASC",
-                scenario["id"],
-            )
+        # Для опцій робимо так само
+        opt_text_col = "text_en" if lang == "en" else "text"
+        opt_msg_col = "msg_en" if lang == "en" else "msg"
+        
+        options = await conn.fetch(
+            f"""SELECT option_id as id, {opt_text_col} as text, 
+                score, {opt_msg_col} as msg 
+                FROM scenario_options WHERE scenario_id = $1 
+                ORDER BY id ASC""",
+            scenario["id"],
+        )
 
-            return {
-                "id": scenario["id"],
-                "text": scenario["text"],
-                "options": [dict(opt) for opt in options],
-            }
+        return {
+            "id": scenario["id"],
+            "text": scenario["text"], # Ключ залишився старим, а дані — англійські!
+            "options": [dict(opt) for opt in options],
+        }
             
     async def get_scenarios_count(self):
         """Повертає загальну кількість сценаріїв у базі"""
